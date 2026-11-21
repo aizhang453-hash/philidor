@@ -2,7 +2,15 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Board } from "./Board";
 import { Game, colorText, outcomeText, type Color } from "./game";
 import { Match, type Player, type PlayerSetup } from "./match";
-import { loadEngines, probe, saveEngines, strengthLevels, type EngineEntry } from "./engines";
+import {
+  addDownloaded,
+  getLatestStockfish,
+  loadEngines,
+  probe,
+  saveEngines,
+  strengthLevels,
+  type EngineEntry,
+} from "./engines";
 import { transport } from "./transport";
 
 interface Setup {
@@ -11,6 +19,11 @@ interface Setup {
 }
 
 const SETUP_KEY = "philidor:setup";
+
+interface Notice {
+  text: string;
+  error: boolean;
+}
 
 const MOVETIMES = [
   { value: 500, label: "0.5 秒" },
@@ -50,8 +63,10 @@ export function App() {
   const [orientation, setOrientation] = useState<Color>("white");
   const [promotion, setPromotion] = useState<{ from: string; to: string } | null>(null);
   const [sync, setSync] = useState(0);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [adding, setAdding] = useState(false);
+  /** 下载 Stockfish: null 没在下, "checking" 在查最新版, 数字是百分之几 */
+  const [downloading, setDownloading] = useState<null | "checking" | number>(null);
 
   useEffect(() => {
     loadEngines().then((list) => {
@@ -130,9 +145,31 @@ export function App() {
       saveEngines(list);
       setSetup((s) => ({ white: fixPlayer(s.white, list), black: fixPlayer(s.black, list) }));
     } catch {
-      setNotice("这个文件不是能用的引擎");
+      setNotice({ text: "这个文件不是能用的引擎", error: true });
     } finally {
       setAdding(false);
+    }
+  }
+
+  async function downloadStockfish() {
+    setNotice(null);
+    setDownloading("checking");
+    try {
+      const r = await getLatestStockfish(engines ?? [], (done, total) =>
+        setDownloading(total > 0 ? Math.floor((done / total) * 100) : 0),
+      );
+      if (r.kind === "latest") {
+        setNotice({ text: `已经是最新的 Stockfish ${r.version}`, error: false });
+        return;
+      }
+      const list = addDownloaded(engines ?? [], r.entry);
+      setEngines(list);
+      saveEngines(list);
+      setSetup((s) => ({ white: fixPlayer(s.white, list), black: fixPlayer(s.black, list) }));
+    } catch (e) {
+      setNotice({ text: `下载失败：${e instanceof Error ? e.message : String(e)}`, error: true });
+    } finally {
+      setDownloading(null);
     }
   }
 
@@ -187,8 +224,10 @@ export function App() {
             onChange={setSetup}
             onStart={start}
             onAdd={addEngine}
+            onDownload={downloadStockfish}
             onRemove={removeEngine}
             adding={adding}
+            downloading={downloading}
             notice={notice}
           />
         )}
@@ -253,9 +292,11 @@ function SetupPanel(props: {
   onChange: (s: Setup) => void;
   onStart: () => void;
   onAdd: () => void;
+  onDownload: () => void;
   onRemove: (id: string) => void;
   adding: boolean;
-  notice: string | null;
+  downloading: null | "checking" | number;
+  notice: Notice | null;
 }) {
   const { engines, setup } = props;
   return (
@@ -292,10 +333,19 @@ function SetupPanel(props: {
           {engines.length === 0 && <li className="muted">还没有引擎</li>}
         </ul>
       )}
-      <button onClick={props.onAdd} disabled={props.adding || !engines}>
-        {props.adding ? "正在打开" : "添加引擎"}
-      </button>
-      {props.notice && <p className="error">{props.notice}</p>}
+      <div className="engine-buttons">
+        <button onClick={props.onAdd} disabled={props.adding || !engines}>
+          {props.adding ? "正在打开" : "添加引擎"}
+        </button>
+        <button onClick={props.onDownload} disabled={props.downloading !== null || !engines}>
+          {props.downloading === null
+            ? "下载最新 Stockfish"
+            : props.downloading === "checking"
+              ? "正在查最新版"
+              : `正在下载 ${props.downloading}%`}
+        </button>
+      </div>
+      {props.notice && <p className={props.notice.error ? "error" : "note"}>{props.notice.text}</p>}
     </div>
   );
 }

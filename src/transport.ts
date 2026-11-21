@@ -8,6 +8,21 @@ export interface FoundEngine {
   path: string;
 }
 
+export interface StockfishLatest {
+  /** 像 sf_19 */
+  tag: string;
+  /** 像 19 */
+  version: string;
+  asset: string;
+  size: number;
+}
+
+export interface Downloaded {
+  tag: string;
+  version: string;
+  path: string;
+}
+
 export interface Transport {
   start(id: string, path: string, onLine: (line: string) => void, onExit: () => void): Promise<void>;
   send(id: string, line: string): Promise<void>;
@@ -16,7 +31,16 @@ export interface Transport {
   findEngines(): Promise<FoundEngine[]>;
   /** 选一个引擎文件, 不选返回 null */
   pickFile(): Promise<string | null>;
+  /** 引擎清单 (JSON), 还没存过是 null */
+  loadEngineList(): Promise<string | null>;
+  saveEngineList(json: string): Promise<void>;
+  /** 官方发布页上最新的 Stockfish */
+  stockfishLatest(): Promise<StockfishLatest>;
+  /** 下载最新的 Stockfish 到菲利多尔自己的引擎文件夹 */
+  stockfishDownload(onProgress: (done: number, total: number) => void): Promise<Downloaded>;
 }
+
+const LIST_KEY = "philidor:engines";
 
 type Handlers = { line: (l: string) => void; exit: () => void };
 const handlers = new Map<string, Handlers>();
@@ -59,6 +83,31 @@ function tauriTransport(): Transport {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const picked = await open({ multiple: false, directory: false, title: "选引擎程序" });
       return typeof picked === "string" ? picked : null;
+    },
+    async loadEngineList() {
+      return (await invoke<string | null>("engines_load")) ?? null;
+    },
+    async saveEngineList(json) {
+      await invoke("engines_save", { json });
+    },
+    async stockfishLatest() {
+      try {
+        return await invoke<StockfishLatest>("stockfish_latest");
+      } catch (e) {
+        throw new Error(String(e));
+      }
+    },
+    async stockfishDownload(onProgress) {
+      const unlisten = await listen<{ done: number; total: number }>("stockfish-progress", (e) =>
+        onProgress(e.payload.done, e.payload.total),
+      );
+      try {
+        return await invoke<Downloaded>("stockfish_download");
+      } catch (e) {
+        throw new Error(String(e));
+      } finally {
+        unlisten();
+      }
     },
   };
 }
@@ -113,6 +162,36 @@ function bridgeTransport(): Transport {
     },
     async pickFile() {
       return window.prompt("引擎程序的路径") || null;
+    },
+    async loadEngineList() {
+      try {
+        return localStorage.getItem(LIST_KEY);
+      } catch {
+        return null;
+      }
+    },
+    async saveEngineList(json) {
+      try {
+        localStorage.setItem(LIST_KEY, json);
+      } catch {
+        /* 存不了就算了 */
+      }
+    },
+    async stockfishLatest() {
+      return (await post({ op: "stockfish-latest" })).latest;
+    },
+    async stockfishDownload(onProgress) {
+      await ensure();
+      const onEvent = (ev: Event) => {
+        const { done, total } = JSON.parse((ev as MessageEvent).data);
+        onProgress(done, total);
+      };
+      source!.addEventListener("progress", onEvent);
+      try {
+        return (await post({ op: "stockfish-download" })).downloaded;
+      } finally {
+        source!.removeEventListener("progress", onEvent);
+      }
     },
   };
 }

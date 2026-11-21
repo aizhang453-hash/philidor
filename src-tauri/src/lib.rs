@@ -9,6 +9,8 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 
+mod stockfish;
+
 struct Running {
     child: Child,
     stdin: ChildStdin,
@@ -135,11 +137,79 @@ fn encroissant_engines(app: AppHandle) -> Vec<FoundEngine> {
         .collect()
 }
 
+/// 菲利多尔自己放引擎的文件夹 (苹果上是 ~/Library/Application Support/io.github.aizhang453-hash.philidor/engines)
+fn engines_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|d| d.join("engines"))
+        .map_err(|e| format!("找不到程序的文件夹：{e}"))
+}
+
+fn engine_list_file(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|d| d.join("engines.json"))
+        .map_err(|e| format!("找不到程序的文件夹：{e}"))
+}
+
+/// 引擎清单 (engines.json), 还没有就是 None
+#[tauri::command]
+fn engines_load(app: AppHandle) -> Option<String> {
+    std::fs::read_to_string(engine_list_file(&app).ok()?).ok()
+}
+
+#[tauri::command]
+fn engines_save(app: AppHandle, json: String) -> Result<(), String> {
+    let file = engine_list_file(&app)?;
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("建不了文件夹：{e}"))?;
+    }
+    let tmp = file.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| format!("存不了：{e}"))?;
+    std::fs::rename(&tmp, &file).map_err(|e| format!("存不了：{e}"))
+}
+
+#[tauri::command]
+async fn stockfish_latest() -> Result<stockfish::Latest, String> {
+    tauri::async_runtime::spawn_blocking(stockfish::latest)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[derive(Clone, Serialize)]
+struct Progress {
+    done: u64,
+    total: u64,
+}
+
+/// 下载最新的 Stockfish, 下载时发 stockfish-progress 事件
+#[tauri::command]
+async fn stockfish_download(app: AppHandle) -> Result<stockfish::Downloaded, String> {
+    let dir = engines_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let latest = stockfish::latest()?;
+        stockfish::download(&latest, &dir, |done, total| {
+            let _ = app.emit("stockfish-progress", Progress { done, total });
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Engines::default())
-        .invoke_handler(tauri::generate_handler![engine_start, engine_send, engine_stop, encroissant_engines])
+        .invoke_handler(tauri::generate_handler![
+            engine_start,
+            engine_send,
+            engine_stop,
+            encroissant_engines,
+            engines_load,
+            engines_save,
+            stockfish_latest,
+            stockfish_download
+        ])
         .build(tauri::generate_context!())
         .expect("程序启动失败")
         .run(|app, event| {

@@ -290,6 +290,18 @@ button.icon:hover:not(:disabled) {
   color: var(--muted);
 }
 
+.engine-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.note {
+  color: var(--text);
+  margin: 10px 0 0;
+  font-size: 14px;
+}
+
 .error {
   color: var(--danger);
   margin: 10px 0 0;

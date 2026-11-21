@@ -58,6 +58,29 @@ function stop(id) {
   setTimeout(() => child.kill(), 1000);
 }
 
+// 查官方发布页上最新的 Stockfish (跟 App 里一样是真的查)
+async function stockfishLatest() {
+  const r = await fetch("https://api.github.com/repos/official-stockfish/Stockfish/releases/latest", {
+    headers: { "User-Agent": "philidor", Accept: "application/vnd.github+json" },
+  });
+  if (!r.ok) throw new Error(`连不上 GitHub：${r.status}`);
+  const d = await r.json();
+  const a = d.assets.find((x) => x.name.includes("macos")) ?? d.assets[0];
+  return { tag: d.tag_name, version: d.tag_name.replace(/^sf_/, ""), asset: a?.name ?? "", size: a?.size ?? 0 };
+}
+
+// 开发时不真的下载 (真的下载在 Rust 里, 有 cargo 测试): 假装下载一秒, 交回命令行给的、已经下载好的 Stockfish
+async function fakeDownload() {
+  const path = [...allowed].find((p) => /stockfish-sf_[^/]+\//.test(p));
+  if (!path) throw new Error("dev-bridge：命令行没给一个放在 stockfish-sf_xx 文件夹里的 Stockfish");
+  for (let i = 1; i <= 10; i++) {
+    broadcast("progress", { done: i * 8_000_000, total: 80_000_000 });
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const tag = path.match(/stockfish-(sf_[^/]+)\//)[1];
+  return { tag, version: tag.replace(/^sf_/, ""), path };
+}
+
 const server = createServer((req, res) => {
   const cors = { "Access-Control-Allow-Origin": ORIGIN };
   if (req.headers.origin && req.headers.origin !== ORIGIN) {
@@ -82,7 +105,7 @@ const server = createServer((req, res) => {
     }
     let body = "";
     req.on("data", (c) => (body += c));
-    req.on("end", () => {
+    req.on("end", async () => {
       const send = (code, data) => {
         res.writeHead(code, { ...cors, "Content-Type": "application/json" });
         res.end(JSON.stringify(data));
@@ -96,6 +119,8 @@ const server = createServer((req, res) => {
           child.stdin.write(cmd.line + "\n");
         } else if (cmd.op === "stop") stop(cmd.id);
         else if (cmd.op === "find") return send(200, { engines: encroissantEngines() });
+        else if (cmd.op === "stockfish-latest") return send(200, { latest: await stockfishLatest() });
+        else if (cmd.op === "stockfish-download") return send(200, { downloaded: await fakeDownload() });
         send(200, { ok: true });
       } catch (e) {
         send(400, { error: e.message });
