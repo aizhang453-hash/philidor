@@ -106,9 +106,11 @@ export class UciEngine {
     this.send(`setoption name ${name} value ${value}`);
   }
 
-  /** 设棋力: null 是满力; 有 UCI_Elo 的给分数, 有 Skill 的给等级 */
-  configure(level: number | null) {
+  /** 设线程数、哈希 (MB) 和棋力 (null 是满力; 有 UCI_Elo 的给分数, 有 Skill 的给等级) */
+  configure(level: number | null, threads?: number, hash?: number) {
     if (this.has("Ponder")) this.setOption("Ponder", false);
+    if (threads !== undefined) this.setSpin("Threads", threads);
+    if (hash !== undefined) this.setSpin("Hash", hash);
     const s = this.strength;
     if (!s) return;
     if (s.kind === "elo") {
@@ -122,6 +124,16 @@ export class UciEngine {
     }
   }
 
+  /** 设一个数字选项, 超出引擎允许的范围就取边上的值; 引擎没有这个选项就不设 */
+  private setSpin(name: string, value: number) {
+    const o = this.options.find((x) => x.name === name);
+    if (!o) return;
+    let v = value;
+    if (o.min !== undefined) v = Math.max(o.min, v);
+    if (o.max !== undefined) v = Math.min(o.max, v);
+    this.setOption(name, v);
+  }
+
   async ready() {
     this.send("isready");
     await this.waitFor((l) => l === "readyok", 30000, "引擎没有准备好");
@@ -132,12 +144,12 @@ export class UciEngine {
     await this.ready();
   }
 
-  /** 让引擎想 movetime 毫秒, 返回它走的棋 (UCI 写法) */
-  search(moves: string[], movetime: number): Promise<string> {
+  /** 让引擎想, go 是 go 后面那一段 (像「movetime 1000」或「wtime 60000 btime 60000 winc 0 binc 0」), 返回它走的棋 (UCI 写法) */
+  search(moves: string[], go: string, timeout: number): Promise<string> {
     if (this.searching) throw new Error("引擎还在想上一步");
     this.send(`position startpos${moves.length ? " moves " + moves.join(" ") : ""}`);
-    this.send(`go movetime ${Math.round(movetime)}`);
-    const p = this.waitFor((l) => /^bestmove\b/.test(l), movetime + 20000, "引擎想太久没出棋").then(
+    this.send(`go ${go}`);
+    const p = this.waitFor((l) => /^bestmove\b/.test(l), timeout, "引擎想太久没出棋").then(
       (line) => line.split(/\s+/)[1] ?? "",
     );
     this.searching = p;

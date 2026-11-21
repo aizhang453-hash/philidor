@@ -29,6 +29,7 @@ struct LineEvent {
 struct FoundEngine {
     name: String,
     path: String,
+    elo: Option<f64>,
 }
 
 #[tauri::command]
@@ -132,7 +133,8 @@ fn encroissant_engines(app: AppHandle) -> Vec<FoundEngine> {
                 return None;
             }
             let name = e.get("name")?.as_str()?.to_string();
-            Some(FoundEngine { name, path })
+            let elo = e.get("elo").and_then(|v| v.as_f64());
+            Some(FoundEngine { name, path, elo })
         })
         .collect()
 }

@@ -15,11 +15,14 @@ export type Reason =
   | "threefold"
   | "fifty"
   | "resign"
+  | "timeout"
   | "engine-error";
 
 export interface Outcome {
   winner?: Color;
   reason: Reason;
+  /** 超时的是哪一方 */
+  by?: Color;
 }
 
 export interface Ply {
@@ -129,6 +132,15 @@ export class Game {
     if (!this.outcome()) this.ended = { winner: opposite(color), reason: "resign" };
   }
 
+  /** 时间用完: 对方有子力将死就算输, 对方子力不够将死就和棋 */
+  timeout(color: Color) {
+    if (this.outcome()) return;
+    const other = opposite(color);
+    this.ended = this.pos.hasInsufficientMaterial(other)
+      ? { reason: "timeout", by: color }
+      : { winner: other, reason: "timeout", by: color };
+  }
+
   /** 引擎出错 (走了不合规的棋、没反应、退出了), 算它输 */
   forfeit(color: Color) {
     if (!this.outcome()) this.ended = { winner: opposite(color), reason: "engine-error" };
@@ -153,6 +165,7 @@ const REASON_TEXT: Record<Reason, string> = {
   threefold: "三次重复",
   fifty: "五十步",
   resign: "认输",
+  timeout: "超时",
   "engine-error": "引擎出错",
 };
 
@@ -164,6 +177,9 @@ export function colorText(color: Color) {
 
 export function outcomeText(o: Outcome): string {
   const reason = REASON_TEXT[o.reason];
+  if (o.reason === "timeout" && o.by) {
+    return o.winner ? `${COLOR_TEXT[o.by]}超时，${COLOR_TEXT[o.winner]}胜` : `${COLOR_TEXT[o.by]}超时，和棋`;
+  }
   if (!o.winner) return `${reason}，和棋`;
   if (o.reason === "resign") return `${COLOR_TEXT[opposite(o.winner)]}认输，${COLOR_TEXT[o.winner]}胜`;
   return `${reason}，${COLOR_TEXT[o.winner]}胜`;

@@ -1,12 +1,20 @@
 // 装了哪些引擎。App 里存在程序文件夹的 engines.json, 浏览器里开发时存在 localStorage。
 import { transport, type Downloaded } from "./transport";
 import { UciEngine, type Strength } from "./uci";
+import { knownElo } from "./ratings";
 
 export interface EngineEntry {
   id: string;
   name: string;
   path: string;
   strength: Strength;
+  /** 引擎的等级分 (En Croissant 清单里写的), 不知道就没有 */
+  elo?: number;
+}
+
+/** 显示用的等级分 */
+export function engineElo(e: EngineEntry): number | undefined {
+  return e.elo ?? knownElo(e.name);
 }
 
 function parse(raw: string | null): EngineEntry[] | null {
@@ -62,7 +70,7 @@ export async function loadEngines(): Promise<EngineEntry[]> {
     return old;
   }
   const list: EngineEntry[] = [];
-  let found: { name: string; path: string }[] = [];
+  let found: { name: string; path: string; elo?: number | null }[] = [];
   try {
     found = await transport.findEngines();
   } catch {
@@ -70,7 +78,9 @@ export async function loadEngines(): Promise<EngineEntry[]> {
   }
   for (const f of found) {
     try {
-      list.push(await probe(f.path));
+      const entry = await probe(f.path);
+      if (f.elo) entry.elo = Math.round(f.elo);
+      list.push(entry);
     } catch {
       /* 打不开的不要 */
     }

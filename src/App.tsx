@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Board } from "./Board";
 import { Game, colorText, outcomeText, type Color } from "./game";
-import { Match, type Player, type PlayerSetup } from "./match";
+import { Match, type Player, type PlayerSetup, type TimeControl } from "./match";
+import { formatClock } from "./clock";
+import { loadBook, type Book } from "./book";
 import {
   addDownloaded,
+  engineElo,
   getLatestStockfish,
   loadEngines,
   probe,
@@ -16,6 +19,21 @@ import { transport } from "./transport";
 interface Setup {
   white: PlayerSetup;
   black: PlayerSetup;
+  /** 两边用一样的限时 */
+  sameTime: boolean;
+  /** 引擎开头几步从开局库里走 */
+  book: boolean;
+}
+
+const DEFAULT_TIME: TimeControl = { minutes: 15, increment: 10 };
+const DEFAULT_THREADS = 1;
+const DEFAULT_HASH = 128;
+const HASH_SIZES = [16, 32, 64, 128, 256, 512, 1024];
+
+/** 线程数能选 1、2、4、8 (不超过这台电脑的核数) */
+function threadChoices(): number[] {
+  const cores = (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 4;
+  return [1, 2, 4, 8].filter((n) => n <= cores);
 }
 
 const SETUP_KEY = "philidor:setup";
@@ -35,21 +53,61 @@ const MOVETIMES = [
   { value: 30000, label: "30 秒" },
 ];
 
+/** 存的设置可能是旧版的, 缺的补上 */
+function readPlayer(p: unknown): PlayerSetup {
+  const o = (p ?? {}) as Record<string, unknown>;
+  const t = o.time as Partial<TimeControl> | null | undefined;
+  const time = t && typeof t.minutes === "number" ? { minutes: t.minutes, increment: Number(t.increment) || 0 } : null;
+  if (o.kind === "engine")
+    return {
+      kind: "engine",
+      engine: String(o.engine ?? ""),
+      movetime: Number(o.movetime) || 1000,
+      level: typeof o.level === "number" ? o.level : null,
+      time,
+      threads: typeof o.threads === "number" ? o.threads : DEFAULT_THREADS,
+      hash: typeof o.hash === "number" ? o.hash : DEFAULT_HASH,
+    };
+  return { kind: "human", time };
+}
+
 function loadSetup(): Setup {
   try {
     const raw = localStorage.getItem(SETUP_KEY);
-    if (raw) return JSON.parse(raw) as Setup;
+    if (raw) {
+      const o = JSON.parse(raw);
+      return { white: readPlayer(o.white), black: readPlayer(o.black), sameTime: o.sameTime ?? true, book: !!o.book };
+    }
   } catch {
     /* 用默认的 */
   }
-  return { white: { kind: "human" }, black: { kind: "engine", engine: "", movetime: 1000, level: null } };
+  return {
+    white: { kind: "human", time: null },
+    black: {
+      kind: "engine",
+      engine: "",
+      movetime: 1000,
+      level: null,
+      time: null,
+      threads: DEFAULT_THREADS,
+      hash: DEFAULT_HASH,
+    },
+    sameTime: true,
+    book: false,
+  };
+}
+
+/** 名字旁边写的分: 限了棋力写限的分 (或等级), 满力写引擎的等级分 */
+function ratingText(entry: EngineEntry, level: number | null): string | undefined {
+  if (level !== null) return entry.strength?.kind === "skill" ? `等级 ${level}` : String(level);
+  return engineElo(entry)?.toString();
 }
 
 /** 选的引擎被删了或者还没有, 换成第一个; 一个引擎都没有就换成人 */
 function fixPlayer(p: PlayerSetup, engines: EngineEntry[]): PlayerSetup {
   if (p.kind === "human") return p;
   if (engines.some((e) => e.id === p.engine)) return p;
-  if (engines.length === 0) return { kind: "human" };
+  if (engines.length === 0) return { kind: "human", time: p.time };
   return { ...p, engine: engines[0].id, level: null };
 }
 
@@ -71,7 +129,7 @@ export function App() {
   useEffect(() => {
     loadEngines().then((list) => {
       setEngines(list);
-      setSetup((s) => ({ white: fixPlayer(s.white, list), black: fixPlayer(s.black, list) }));
+      setSetup((s) => ({ ...s, white: fixPlayer(s.white, list), black: fixPlayer(s.black, list) }));
     });
   }, []);
 
@@ -93,21 +151,47 @@ export function App() {
   const dests = useMemo(() => game.dests(), [game, fen]);
   const movable = match?.movable;
 
-  function start() {
+  // 棋钟在走的时候每十分之一秒刷新一次
+  const ticking = !!match && match.hasClock && match.clockRunning;
+  useEffect(() => {
+    if (!ticking) return;
+    const t = setInterval(redraw, 100);
+    return () => clearInterval(t);
+  }, [ticking, match]);
+
+  async function start() {
     if (!engines) return;
+    let book: Book | null = null;
+    if (setup.book && (setup.white.kind === "engine" || setup.black.kind === "engine")) {
+      try {
+        book = await loadBook();
+      } catch {
+        setNotice({ text: "读不到开局库", error: true });
+      }
+    }
     const players = {} as Record<Color, Player>;
     for (const color of ["white", "black"] as Color[]) {
       const p = setup[color];
       const entry = p.kind === "engine" ? engines.find((e) => e.id === p.engine) : undefined;
       players[color] =
         p.kind === "engine" && entry
-          ? { kind: "engine", name: entry.name, path: entry.path, movetime: p.movetime, level: p.level }
-          : { kind: "human", name: "玩家" };
+          ? {
+              kind: "engine",
+              name: entry.name,
+              path: entry.path,
+              movetime: p.movetime,
+              level: p.level,
+              time: p.time,
+              threads: p.threads,
+              hash: p.hash,
+              rating: ratingText(entry, p.level),
+            }
+          : { kind: "human", name: "玩家", time: p.time };
     }
     setOrientation(players.white.kind === "human" || players.black.kind === "engine" ? "white" : "black");
     setPromotion(null);
     setNotice(null);
-    const m = new Match(players);
+    const m = new Match(players, book);
     setMatch(m);
     void m.start();
   }
@@ -143,7 +227,7 @@ export function App() {
       const list = [...(engines ?? []), entry];
       setEngines(list);
       saveEngines(list);
-      setSetup((s) => ({ white: fixPlayer(s.white, list), black: fixPlayer(s.black, list) }));
+      setSetup((s) => ({ ...s, white: fixPlayer(s.white, list), black: fixPlayer(s.black, list) }));
     } catch {
       setNotice({ text: "这个文件不是能用的引擎", error: true });
     } finally {
@@ -165,7 +249,7 @@ export function App() {
       const list = addDownloaded(engines ?? [], r.entry);
       setEngines(list);
       saveEngines(list);
-      setSetup((s) => ({ white: fixPlayer(s.white, list), black: fixPlayer(s.black, list) }));
+      setSetup((s) => ({ ...s, white: fixPlayer(s.white, list), black: fixPlayer(s.black, list) }));
     } catch (e) {
       setNotice({ text: `下载失败：${e instanceof Error ? e.message : String(e)}`, error: true });
     } finally {
@@ -177,7 +261,7 @@ export function App() {
     const list = (engines ?? []).filter((e) => e.id !== id);
     setEngines(list);
     saveEngines(list);
-    setSetup((s) => ({ white: fixPlayer(s.white, list), black: fixPlayer(s.black, list) }));
+    setSetup((s) => ({ ...s, white: fixPlayer(s.white, list), black: fixPlayer(s.black, list) }));
   }
 
   const top: Color = orientation === "white" ? "black" : "white";
@@ -239,18 +323,32 @@ export function App() {
 function PlayerBar(props: { color: Color; match: Match | null; setup: Setup; engines: EngineEntry[] | null }) {
   const { color, match } = props;
   let name: string;
-  if (match) name = match.players[color].name;
-  else {
+  let rating: string | undefined;
+  let left: number | null;
+  if (match) {
+    const p = match.players[color];
+    name = p.name;
+    rating = p.kind === "engine" ? p.rating : undefined;
+    left = match.remaining(color);
+  } else {
     const p = props.setup[color];
-    name = p.kind === "engine" ? (props.engines?.find((e) => e.id === p.engine)?.name ?? "引擎") : "玩家";
+    const entry = p.kind === "engine" ? props.engines?.find((e) => e.id === p.engine) : undefined;
+    name = p.kind === "engine" ? (entry?.name ?? "引擎") : "玩家";
+    rating = p.kind === "engine" && entry ? ratingText(entry, p.level) : undefined;
+    left = p.time ? p.time.minutes * 60_000 : null;
   }
   const thinking = match?.thinking === color;
   const toMove = match && match.status === "playing" && !match.over && match.game.turn === color;
+  const running = !!match && match.clockRunning && match.game.turn === color;
   return (
     <div className={`player-bar${toMove ? " to-move" : ""}`}>
       <span className={`chip ${color}`} />
       <span className="player-name">{name}</span>
+      {rating && <span className="rating">{rating}</span>}
       {thinking && <span className="thinking">在想</span>}
+      {left !== null && (
+        <span className={`clock${running ? " running" : ""}${left < 10_000 ? " low" : ""}`}>{formatClock(left)}</span>
+      )}
     </div>
   );
 }
@@ -299,18 +397,42 @@ function SetupPanel(props: {
   notice: Notice | null;
 }) {
   const { engines, setup } = props;
+  const update = (color: Color, p: PlayerSetup) => {
+    const next: Setup = { ...setup, [color]: p };
+    if (setup.sameTime) {
+      const other: Color = color === "white" ? "black" : "white";
+      next[other] = { ...next[other], time: p.time };
+    }
+    props.onChange(next);
+  };
   return (
     <div className="setup">
       <h2>新对局</h2>
-      {(["white", "black"] as Color[]).map((color) => (
-        <PlayerPicker
-          key={color}
-          color={color}
-          value={setup[color]}
-          engines={engines ?? []}
-          onChange={(p) => props.onChange({ ...setup, [color]: p })}
+      <PlayerPicker color="white" value={setup.white} engines={engines ?? []} onChange={(p) => update("white", p)} />
+      <div className="swap-row">
+        <button className="swap" onClick={() => props.onChange({ ...setup, white: setup.black, black: setup.white })}>
+          ⇅ 换边
+        </button>
+      </div>
+      <PlayerPicker color="black" value={setup.black} engines={engines ?? []} onChange={(p) => update("black", p)} />
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={setup.sameTime}
+          onChange={(ev) =>
+            props.onChange(
+              ev.target.checked
+                ? { ...setup, sameTime: true, black: { ...setup.black, time: setup.white.time } }
+                : { ...setup, sameTime: false },
+            )
+          }
         />
-      ))}
+        相同时限
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={setup.book} onChange={(ev) => props.onChange({ ...setup, book: ev.target.checked })} />
+        用开局库
+      </label>
       <button className="primary" disabled={!engines} onClick={props.onStart}>
         开始
       </button>
@@ -325,6 +447,7 @@ function SetupPanel(props: {
               <span className="engine-name" title={e.path}>
                 {e.name}
               </span>
+              {engineElo(e) && <span className="rating">{engineElo(e)}</span>}
               <button className="icon" title="删掉" onClick={() => props.onRemove(e.id)}>
                 ×
               </button>
@@ -370,26 +493,65 @@ function PlayerPicker(props: {
           value={value.kind === "engine" ? value.engine : "human"}
           onChange={(ev) => {
             const v = ev.target.value;
-            if (v === "human") props.onChange({ kind: "human" });
+            if (v === "human") props.onChange({ kind: "human", time: value.time });
             else
               props.onChange({
                 kind: "engine",
                 engine: v,
                 movetime: value.kind === "engine" ? value.movetime : 1000,
                 level: null,
+                time: value.time,
+                threads: value.kind === "engine" ? value.threads : DEFAULT_THREADS,
+                hash: value.kind === "engine" ? value.hash : DEFAULT_HASH,
               });
           }}
         >
           <option value="human">玩家</option>
           {engines.map((e) => (
             <option key={e.id} value={e.id}>
-              {e.name}
+              {engineElo(e) ? `${e.name}（${engineElo(e)}）` : e.name}
             </option>
           ))}
         </select>
       </label>
+      <div className="row sub">
+        <span className="label">时间</span>
+        <div className="segmented">
+          <button
+            className={value.time ? "on" : ""}
+            onClick={() => !value.time && props.onChange({ ...value, time: { ...DEFAULT_TIME } })}
+          >
+            限时
+          </button>
+          <button className={value.time ? "" : "on"} onClick={() => value.time && props.onChange({ ...value, time: null })}>
+            不限时
+          </button>
+        </div>
+      </div>
+      {value.time && (
+        <div className="row sub">
+          <span className="label" />
+          <span className="tc">
+            <NumberInput
+              value={value.time.minutes}
+              min={1}
+              max={180}
+              onChange={(n) => value.time && props.onChange({ ...value, time: { ...value.time, minutes: n } })}
+            />
+            分钟 加
+            <NumberInput
+              value={value.time.increment}
+              min={0}
+              max={60}
+              onChange={(n) => value.time && props.onChange({ ...value, time: { ...value.time, increment: n } })}
+            />
+            秒
+          </span>
+        </div>
+      )}
       {value.kind === "engine" && (
         <>
+          {!value.time && (
           <label className="row sub">
             <span className="label">每步想</span>
             <select
@@ -403,6 +565,7 @@ function PlayerPicker(props: {
               ))}
             </select>
           </label>
+          )}
           {levels.length > 1 && (
             <label className="row sub">
               <span className="label">棋力</span>
@@ -420,9 +583,50 @@ function PlayerPicker(props: {
               </select>
             </label>
           )}
+          <div className="row sub">
+            <span className="label">线程数</span>
+            <div className="segmented">
+              {threadChoices().map((n) => (
+                <button key={n} className={value.threads === n ? "on" : ""} onClick={() => props.onChange({ ...value, threads: n })}>
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="row sub">
+            <span className="label">内存</span>
+            <select value={value.hash} onChange={(ev) => props.onChange({ ...value, hash: Number(ev.target.value) })}>
+              {HASH_SIZES.map((mb) => (
+                <option key={mb} value={mb}>
+                  {mb >= 1024 ? `${mb / 1024} GB` : `${mb} MB`}
+                </option>
+              ))}
+            </select>
+          </label>
         </>
       )}
     </div>
+  );
+}
+
+/** 数字框: 打字的时候可以先删空, 不合规的数不算, 离开时变回现在的值 */
+function NumberInput(props: { value: number; min: number; max: number; onChange: (n: number) => void }) {
+  const [text, setText] = useState(String(props.value));
+  useEffect(() => setText(String(props.value)), [props.value]);
+  return (
+    <input
+      type="number"
+      inputMode="numeric"
+      min={props.min}
+      max={props.max}
+      value={text}
+      onChange={(ev) => {
+        setText(ev.target.value);
+        const n = Number(ev.target.value);
+        if (ev.target.value !== "" && Number.isInteger(n) && n >= props.min && n <= props.max) props.onChange(n);
+      }}
+      onBlur={() => setText(String(props.value))}
+    />
   );
 }
 

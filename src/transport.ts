@@ -6,6 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 export interface FoundEngine {
   name: string;
   path: string;
+  elo?: number | null;
 }
 
 export interface StockfishLatest {

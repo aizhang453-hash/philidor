@@ -15,7 +15,7 @@ function encroissantEngines() {
   try {
     return JSON.parse(readFileSync(file, "utf8"))
       .filter((e) => e.type === "local" && existsSync(e.path))
-      .map((e) => ({ name: e.name, path: e.path }));
+      .map((e) => ({ name: e.name, path: e.path, elo: e.elo ?? null }));
   } catch {
     return [];
   }

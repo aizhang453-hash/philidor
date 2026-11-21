@@ -2493,7 +2493,7 @@ dependencies = [
 
 [[package]]
 name = "philidor"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "flate2",
  "serde",
