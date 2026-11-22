@@ -41,7 +41,7 @@ npm run tauri build
 npm test
 ```
 
-`npm run tauri dev` 是开发时边改边看; `npm run tauri build` 编出正式的程序 (苹果上在 `src-tauri/target/release/bundle/macos/`)。
+`npm run tauri dev` 是开发时边改边看; `npm run tauri build` 编出正式的程序 (苹果上在 `src-tauri/target.noindex/release/bundle/macos/`)。
 
 在普通浏览器里开发界面: 先 `node tools/dev-bridge.mjs` (替 App 开引擎), 再 `npx vite`, 打开 http://localhost:1420 。
 

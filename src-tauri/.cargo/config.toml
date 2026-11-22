@@ -1,0 +1,4 @@
+# 编出来的东西放在 target.noindex: 文件夹名以 .noindex 结尾, 苹果的聚焦搜索就不收录,
+# 不然「应用程序」里的菲利多尔之外, 搜索和启动台里还会多出一个编译文件夹里的。
+[build]
+target-dir = "target.noindex"
