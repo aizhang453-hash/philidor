@@ -47,8 +47,13 @@ export function strengthOf(options: UciOption[]): Strength {
 }
 
 /** 引擎自己报的名字, 去掉多余的空格和「64-bit」 */
+/** 去掉名字后面「64-bit」「(dotprod)」这种编译时的标记 */
 export function cleanName(name: string): string {
-  return name.replace(/\s+64-bit\s*$/i, "").replace(/\s+/g, " ").trim();
+  return name
+    .replace(/\s+64-bit\s*$/i, "")
+    .replace(/\s*\((dotprod|neon|avx2|avx512|bmi2|popcnt|sse[0-9.]*|modern|x86-64[^)]*)\)\s*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 type Waiter = { test: (line: string) => boolean; resolve: (line: string) => void; reject: (e: Error) => void };

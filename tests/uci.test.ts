@@ -64,4 +64,6 @@ it("引擎名字", () => {
   expect(cleanName("Komodo 14.1 64-bit ")).toBe("Komodo 14.1");
   expect(cleanName("Dragon by Komodo Chess  64-bit ")).toBe("Dragon by Komodo Chess");
   expect(cleanName("Stockfish 19")).toBe("Stockfish 19");
+  expect(cleanName("RubiChess 20240817 (dotprod)")).toBe("RubiChess 20240817");
+  expect(cleanName("RubiChess 20240817 (avx2)")).toBe("RubiChess 20240817");
 });

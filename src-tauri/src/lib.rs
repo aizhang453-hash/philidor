@@ -199,6 +199,35 @@ async fn stockfish_download(app: AppHandle) -> Result<stockfish::Downloaded, Str
     .map_err(|e| e.to_string())?
 }
 
+/// 引擎文件夹里放的头像: avatar.png / .jpg / .jpeg / .webp, 先找引擎程序所在的文件夹, 再找上一层。
+/// 返回能直接放进 <img> 的 data: 网址; 没有就是 None。
+fn find_avatar(exe: &Path) -> Option<String> {
+    use base64::Engine as _;
+    let dir = exe.parent()?;
+    for d in [Some(dir), dir.parent()].into_iter().flatten() {
+        for (name, mime) in [
+            ("avatar.png", "image/png"),
+            ("avatar.jpg", "image/jpeg"),
+            ("avatar.jpeg", "image/jpeg"),
+            ("avatar.webp", "image/webp"),
+        ] {
+            let file = d.join(name);
+            let Ok(meta) = std::fs::metadata(&file) else { continue };
+            if !meta.is_file() || meta.len() > 2_000_000 {
+                continue;
+            }
+            let bytes = std::fs::read(&file).ok()?;
+            return Some(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)));
+        }
+    }
+    None
+}
+
+#[tauri::command]
+fn engine_avatar(path: String) -> Option<String> {
+    find_avatar(Path::new(&path))
+}
+
 /// 问本机的大语言模型 (Ollama)。只连本机, 只许几个接口 (见 ollama.rs)
 #[tauri::command]
 async fn ollama_request(path: String, body: Option<String>, timeout_ms: u64) -> Result<ollama::Reply, String> {
@@ -227,6 +256,7 @@ pub fn run() {
             stockfish_latest,
             stockfish_download,
             ollama_request,
+            engine_avatar,
             app_quit
         ])
         .build(tauri::generate_context!())
@@ -242,4 +272,24 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_avatar_next_to_engine_or_one_up() {
+        let root = std::env::temp_dir().join(format!("philidor-avatar-{}", std::process::id()));
+        let osx = root.join("OSX");
+        std::fs::create_dir_all(&osx).unwrap();
+        let exe = osx.join("engine");
+        std::fs::write(&exe, b"").unwrap();
+        assert_eq!(find_avatar(&exe), None);
+        std::fs::write(root.join("avatar.jpg"), [0xff, 0xd8, 0xff]).unwrap();
+        assert_eq!(find_avatar(&exe).as_deref(), Some("data:image/jpeg;base64,/9j/"));
+        std::fs::write(osx.join("avatar.png"), [0x89, b'P', b'N']).unwrap();
+        assert_eq!(find_avatar(&exe).as_deref(), Some("data:image/png;base64,iVBO"));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

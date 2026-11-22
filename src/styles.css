@@ -47,7 +47,7 @@ body {
 
 .app {
   --panel: 320px;
-  --bar: 40px;
+  --bar: 52px;
   --board: min(calc(100vh - 32px - 2 * var(--bar)), calc(100vw - 48px - var(--panel)));
   display: flex;
   height: 100%;
@@ -624,4 +624,71 @@ button.icon:hover:not(:disabled) {
 
 .card .engine-buttons button {
   flex: 1;
+}
+
+/* 名字旁边的头像, 右下角小圆点是执白还是执黑 */
+.avatar {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  flex: none;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: 22%;
+  display: block;
+}
+
+.avatar::after {
+  content: "";
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--bg);
+}
+
+.avatar.white::after {
+  background: #f1f3f5;
+}
+
+.avatar.black::after {
+  background: #141414;
+  border: 1px solid #8a8a8a;
+}
+
+.engine-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 22%;
+  flex: none;
+}
+
+/* 有引擎出了新版: 开始菜单「引擎」按钮右上角一个小点, 引擎页名字后面一个小框 */
+.menu-buttons button {
+  position: relative;
+}
+
+.dot {
+  position: absolute;
+  top: 9px;
+  right: 12px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.update {
+  flex: none;
+  font-size: 12px;
+  color: var(--primary);
+  border: 1px solid var(--primary);
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
 }

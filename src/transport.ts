@@ -45,6 +45,8 @@ export interface Transport {
   stockfishLatest(): Promise<StockfishLatest>;
   /** 下载最新的 Stockfish 到菲利多尔自己的引擎文件夹 */
   stockfishDownload(onProgress: (done: number, total: number) => void): Promise<Downloaded>;
+  /** 引擎文件夹里放的头像 (avatar.png 之类), 没有是 null */
+  engineAvatar(path: string): Promise<string | null>;
   /** 问本机的大语言模型 (Ollama); body 是 null 就是 GET */
   ollama(path: string, body: string | null, timeoutMs: number): Promise<OllamaReply>;
   /** 关掉程序 */
@@ -118,6 +120,13 @@ function tauriTransport(): Transport {
         throw new Error(String(e));
       } finally {
         unlisten();
+      }
+    },
+    async engineAvatar(path) {
+      try {
+        return (await invoke<string | null>("engine_avatar", { path })) ?? null;
+      } catch {
+        return null;
       }
     },
     async ollama(path, body, timeoutMs) {
@@ -213,6 +222,13 @@ function bridgeTransport(): Transport {
         return (await post({ op: "stockfish-download" })).downloaded;
       } finally {
         source!.removeEventListener("progress", onEvent);
+      }
+    },
+    async engineAvatar(path) {
+      try {
+        return (await post({ op: "avatar", path })).avatar ?? null;
+      } catch {
+        return null;
       }
     },
     async ollama(path, body, timeoutMs) {

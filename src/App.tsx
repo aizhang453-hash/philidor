@@ -7,6 +7,7 @@ import { loadBook, type Book } from "./book";
 import {
   addDownloaded,
   engineElo,
+  fillRatings,
   getLatestStockfish,
   loadEngines,
   probe,
@@ -15,6 +16,8 @@ import {
   type EngineEntry,
 } from "./engines";
 import { transport } from "./transport";
+import { PLAYER_AVATAR, engineAvatar, loadOwnAvatars } from "./avatars";
+import { findUpdates } from "./updates";
 import iconUrl from "../src-tauri/icons/icon.svg";
 
 interface Setup {
@@ -101,9 +104,9 @@ function loadSetup(): Setup {
 }
 
 /** 名字旁边写的分: 限了棋力写限的分 (或等级), 满力写引擎的等级分 */
-function ratingText(entry: EngineEntry, level: number | null): string | undefined {
+function ratingText(entry: EngineEntry, level: number | null, threads: number): string | undefined {
   if (level !== null) return entry.strength?.kind === "skill" ? `等级 ${level}` : String(level);
-  return engineElo(entry)?.toString();
+  return engineElo(entry, threads)?.toString();
 }
 
 /** 选的引擎被删了或者还没有, 换成第一个; 一个引擎都没有就换成人 */
@@ -119,6 +122,10 @@ const idleGame = new Game();
 export function App() {
   const [screen, setScreen] = useState<Screen>("menu");
   const [engines, setEngines] = useState<EngineEntry[] | null>(null);
+  /** 引擎文件夹里放的头像, 按引擎程序路径 */
+  const [ownAvatars, setOwnAvatars] = useState<Record<string, string>>({});
+  /** 出了新版的引擎: 编号 → 新版本号 */
+  const [updates, setUpdates] = useState<Record<string, string>>({});
   const [setup, setSetup] = useState<Setup>(loadSetup);
   const [match, setMatch] = useState<Match | null>(null);
   const [, redraw] = useReducer((x: number) => x + 1, 0);
@@ -134,8 +141,37 @@ export function App() {
     loadEngines().then((list) => {
       setEngines(list);
       setSetup((s) => ({ ...s, white: fixPlayer(s.white, list), black: fixPlayer(s.black, list) }));
+      updateRatings(list);
+      void findUpdates(list).then(setUpdates);
     });
   }, []);
+
+  /** 还不知道等级分的引擎 (像刚下载的新版 Stockfish) 去 En Croissant 的清单里找 */
+  function updateRatings(list: EngineEntry[]) {
+    void fillRatings(list).then((filled) => {
+      if (!filled) return;
+      setEngines((cur) => {
+        if (!cur) return cur;
+        const next = cur.map((e) => {
+          const f = filled.find((x) => x.id === e.id);
+          return f?.elo !== undefined && engineElo(e) === undefined ? { ...e, elo: f.elo } : e;
+        });
+        saveEngines(next);
+        return next;
+      });
+    });
+  }
+
+  useEffect(() => {
+    if (!engines) return;
+    let live = true;
+    loadOwnAvatars(engines.map((e) => e.path)).then((a) => {
+      if (live) setOwnAvatars(a);
+    });
+    return () => {
+      live = false;
+    };
+  }, [engines]);
 
   useEffect(() => {
     try {
@@ -198,7 +234,7 @@ export function App() {
               time: p.time,
               threads: p.threads,
               hash: p.hash,
-              rating: ratingText(entry, p.level),
+              rating: ratingText(entry, p.level, p.threads),
             }
           : { kind: "human", name: "玩家", time: p.time };
     }
@@ -269,6 +305,7 @@ export function App() {
       setEngines(list);
       saveEngines(list);
       setSetup((s) => ({ ...s, white: fixPlayer(s.white, list), black: fixPlayer(s.black, list) }));
+      updateRatings(list);
     } catch (e) {
       setNotice({ text: `下载失败：${e instanceof Error ? e.message : String(e)}`, error: true });
     } finally {
@@ -287,13 +324,22 @@ export function App() {
   const bottom: Color = orientation;
 
   if (screen === "menu") {
-    return <Menu onPlay={() => go("game")} onEngines={() => go("engines")} onQuit={() => transport.quit()} />;
+    return (
+      <Menu
+        onPlay={() => go("game")}
+        onEngines={() => go("engines")}
+        onQuit={() => transport.quit()}
+        hasUpdate={(engines ?? []).some((e) => updates[e.id])}
+      />
+    );
   }
 
   if (screen === "engines") {
     return (
       <EnginesPage
         engines={engines}
+        avatars={ownAvatars}
+        updates={updates}
         onBack={() => go("menu")}
         onAdd={addEngine}
         onDownload={downloadStockfish}
@@ -308,7 +354,7 @@ export function App() {
   return (
     <div className="app">
       <div className="board-col">
-        <PlayerBar color={top} match={match} setup={setup} engines={engines} />
+        <PlayerBar color={top} match={match} setup={setup} engines={engines} avatars={ownAvatars} />
         <Board
           key={sync}
           fen={fen}
@@ -333,7 +379,7 @@ export function App() {
             />
           )}
         </Board>
-        <PlayerBar color={bottom} match={match} setup={setup} engines={engines} />
+        <PlayerBar color={bottom} match={match} setup={setup} engines={engines} avatars={ownAvatars} />
       </div>
 
       <aside className="panel">
@@ -354,29 +400,40 @@ export function App() {
   );
 }
 
-function PlayerBar(props: { color: Color; match: Match | null; setup: Setup; engines: EngineEntry[] | null }) {
+function PlayerBar(props: {
+  color: Color;
+  match: Match | null;
+  setup: Setup;
+  engines: EngineEntry[] | null;
+  avatars: Record<string, string>;
+}) {
   const { color, match } = props;
   let name: string;
   let rating: string | undefined;
   let left: number | null;
+  let avatar: string;
   if (match) {
     const p = match.players[color];
     name = p.name;
     rating = p.kind === "engine" ? p.rating : undefined;
     left = match.remaining(color);
+    avatar = p.kind === "engine" ? engineAvatar(p.name, props.avatars[p.path]) : PLAYER_AVATAR;
   } else {
     const p = props.setup[color];
     const entry = p.kind === "engine" ? props.engines?.find((e) => e.id === p.engine) : undefined;
     name = p.kind === "engine" ? (entry?.name ?? "引擎") : "玩家";
-    rating = p.kind === "engine" && entry ? ratingText(entry, p.level) : undefined;
+    rating = p.kind === "engine" && entry ? ratingText(entry, p.level, p.threads) : undefined;
     left = p.time ? p.time.minutes * 60_000 : null;
+    avatar = p.kind === "engine" ? engineAvatar(name, entry && props.avatars[entry.path]) : PLAYER_AVATAR;
   }
   const thinking = match?.thinking === color;
   const toMove = match && match.status === "playing" && !match.over && match.game.turn === color;
   const running = !!match && match.clockRunning && match.game.turn === color;
   return (
     <div className={`player-bar${toMove ? " to-move" : ""}`}>
-      <span className={`chip ${color}`} />
+      <span className={`avatar ${color}`}>
+        <img src={avatar} alt="" draggable={false} />
+      </span>
       <span className="player-name">{name}</span>
       {rating && <span className="rating">{rating}</span>}
       {thinking && <span className="thinking">在想</span>}
@@ -475,7 +532,7 @@ function SetupPanel(props: {
   );
 }
 
-function Menu(props: { onPlay: () => void; onEngines: () => void; onQuit: () => void }) {
+function Menu(props: { onPlay: () => void; onEngines: () => void; onQuit: () => void; hasUpdate: boolean }) {
   return (
     <div className="menu">
       <img className="menu-icon" src={iconUrl} alt="" draggable={false} />
@@ -484,7 +541,10 @@ function Menu(props: { onPlay: () => void; onEngines: () => void; onQuit: () => 
         <button className="primary" onClick={props.onPlay}>
           新对局
         </button>
-        <button onClick={props.onEngines}>引擎</button>
+        <button onClick={props.onEngines}>
+          引擎
+          {props.hasUpdate && <span className="dot" title="有引擎出了新版" />}
+        </button>
         <button onClick={props.onQuit}>退出</button>
       </nav>
     </div>
@@ -493,6 +553,8 @@ function Menu(props: { onPlay: () => void; onEngines: () => void; onQuit: () => 
 
 function EnginesPage(props: {
   engines: EngineEntry[] | null;
+  avatars: Record<string, string>;
+  updates: Record<string, string>;
   onBack: () => void;
   onAdd: () => void;
   onDownload: () => void;
@@ -515,9 +577,11 @@ function EnginesPage(props: {
           <ul className="engine-list">
             {engines.map((e) => (
               <li key={e.id}>
+                <img className="engine-avatar" src={engineAvatar(e.name, props.avatars[e.path])} alt="" draggable={false} />
                 <span className="engine-name" title={e.path}>
                   {e.name}
                 </span>
+                {props.updates[e.id] && <span className="update">有新版 {props.updates[e.id]}</span>}
                 {engineElo(e) && <span className="rating">{engineElo(e)}</span>}
                 <button className="icon" title="删掉" onClick={() => props.onRemove(e.id)}>
                   ×
@@ -581,7 +645,9 @@ function PlayerPicker(props: {
           <option value="human">玩家</option>
           {engines.map((e) => (
             <option key={e.id} value={e.id}>
-              {engineElo(e) ? `${e.name}（${engineElo(e)}）` : e.name}
+              {engineElo(e, value.kind === "engine" ? value.threads : 1)
+                ? `${e.name}（${engineElo(e, value.kind === "engine" ? value.threads : 1)}）`
+                : e.name}
             </option>
           ))}
         </select>

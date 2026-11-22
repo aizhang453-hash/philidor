@@ -3,7 +3,7 @@
 // 只听本机 127.0.0.1:17890, 只认 http://localhost:1420 来的请求, 只开 En Croissant 清单里的引擎和命令行给的引擎。
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 
@@ -46,6 +46,25 @@ function start(id, path) {
   });
   child.on("error", () => {});
   engines.set(id, child);
+}
+
+/** 引擎文件夹里放的头像 (跟 App 里 Rust 的 find_avatar 一样找) */
+function findAvatar(path) {
+  if (!allowed.has(path)) throw new Error(`不在允许的清单里：${path}`);
+  const dir = dirname(path);
+  for (const d of [dir, dirname(dir)]) {
+    for (const [name, mime] of [
+      ["avatar.png", "image/png"],
+      ["avatar.jpg", "image/jpeg"],
+      ["avatar.jpeg", "image/jpeg"],
+      ["avatar.webp", "image/webp"],
+    ]) {
+      const f = join(d, name);
+      if (existsSync(f) && statSync(f).isFile() && statSync(f).size <= 2_000_000)
+        return `data:${mime};base64,${readFileSync(f).toString("base64")}`;
+    }
+  }
+  return null;
 }
 
 function stop(id) {
@@ -119,6 +138,7 @@ const server = createServer((req, res) => {
           child.stdin.write(cmd.line + "\n");
         } else if (cmd.op === "stop") stop(cmd.id);
         else if (cmd.op === "find") return send(200, { engines: encroissantEngines() });
+        else if (cmd.op === "avatar") return send(200, { avatar: findAvatar(cmd.path) });
         else if (cmd.op === "stockfish-latest") return send(200, { latest: await stockfishLatest() });
         else if (cmd.op === "stockfish-download") return send(200, { downloaded: await fakeDownload() });
         send(200, { ok: true });

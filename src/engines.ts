@@ -1,20 +1,20 @@
 // 装了哪些引擎。App 里存在程序文件夹的 engines.json, 浏览器里开发时存在 localStorage。
 import { transport, type Downloaded } from "./transport";
 import { UciEngine, type Strength } from "./uci";
-import { knownElo } from "./ratings";
+import { ccrlElo, listedElo, type ListedEngine } from "./ratings";
 
 export interface EngineEntry {
   id: string;
   name: string;
   path: string;
   strength: Strength;
-  /** 引擎的等级分 (En Croissant 清单里写的), 不知道就没有 */
+  /** CCRL 榜上没有时, 从 En Croissant 清单里找到的等级分; 不知道就没有 */
   elo?: number;
 }
 
-/** 显示用的等级分 */
-export function engineElo(e: EngineEntry): number | undefined {
-  return e.elo ?? knownElo(e.name);
+/** 显示用的等级分: 先看 CCRL 榜 (按用几个线程), 没有再用 En Croissant 清单里的 */
+export function engineElo(e: EngineEntry, threads = 1): number | undefined {
+  return ccrlElo(e.name, threads) ?? e.elo;
 }
 
 function parse(raw: string | null): EngineEntry[] | null {
@@ -100,9 +100,44 @@ export function isDownloadedStockfish(e: EngineEntry): boolean {
   return /[\\/]stockfish-sf_[^\\/]+[\\/]/.test(e.path);
 }
 
-/** 下载好以后: 换掉以前自己下载的旧版, 新的放进清单 */
+/** 下载好以后: 新版换掉以前自己下载的旧版 (还是原来那一条, 选它的对局设置不用重选); 以前没下载过就加在最后 */
 export function addDownloaded(list: EngineEntry[], entry: EngineEntry): EngineEntry[] {
-  return [...list.filter((e) => !isDownloadedStockfish(e)), entry];
+  const old = list.findIndex(isDownloadedStockfish);
+  if (old < 0) return [...list, entry];
+  const replaced = { ...entry, id: list[old].id };
+  return list.flatMap((e, i) => (i === old ? [replaced] : isDownloadedStockfish(e) ? [] : [e]));
+}
+
+/** En Croissant 网站上的引擎清单 (有每个引擎的等级分, 出了新版它会更新) */
+const RATINGS_URL = "https://encroissant.org/engines.json";
+
+async function fetchListed(): Promise<ListedEngine[]> {
+  const r = await fetch(RATINGS_URL, { signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return (await r.json()) as ListedEngine[];
+}
+
+/** 还不知道等级分的引擎 (像刚下载的新版 Stockfish), 去 En Croissant 的清单里找; 找到了返回新清单, 没变返回 null */
+export async function fillRatings(
+  list: EngineEntry[],
+  fetchList: () => Promise<ListedEngine[]> = fetchListed,
+): Promise<EngineEntry[] | null> {
+  if (list.every((e) => engineElo(e) !== undefined)) return null;
+  let listed: ListedEngine[];
+  try {
+    listed = await fetchList();
+  } catch {
+    return null;
+  }
+  let changed = false;
+  const out = list.map((e) => {
+    if (engineElo(e) !== undefined) return e;
+    const elo = listedElo(e.name, listed);
+    if (elo === undefined) return e;
+    changed = true;
+    return { ...e, elo };
+  });
+  return changed ? out : null;
 }
 
 export type StockfishResult = { kind: "latest"; version: string } | { kind: "installed"; entry: EngineEntry };
