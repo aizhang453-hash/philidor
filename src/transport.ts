@@ -24,6 +24,12 @@ export interface Downloaded {
   path: string;
 }
 
+/** Ollama 的回答: HTTP 状态和正文 (JSON) */
+export interface OllamaReply {
+  status: number;
+  body: string;
+}
+
 export interface Transport {
   start(id: string, path: string, onLine: (line: string) => void, onExit: () => void): Promise<void>;
   send(id: string, line: string): Promise<void>;
@@ -39,6 +45,10 @@ export interface Transport {
   stockfishLatest(): Promise<StockfishLatest>;
   /** 下载最新的 Stockfish 到菲利多尔自己的引擎文件夹 */
   stockfishDownload(onProgress: (done: number, total: number) => void): Promise<Downloaded>;
+  /** 问本机的大语言模型 (Ollama); body 是 null 就是 GET */
+  ollama(path: string, body: string | null, timeoutMs: number): Promise<OllamaReply>;
+  /** 关掉程序 */
+  quit(): void;
 }
 
 const LIST_KEY = "philidor:engines";
@@ -110,10 +120,21 @@ function tauriTransport(): Transport {
         unlisten();
       }
     },
+    async ollama(path, body, timeoutMs) {
+      try {
+        return await invoke<OllamaReply>("ollama_request", { path, body, timeoutMs });
+      } catch (e) {
+        throw new Error(String(e));
+      }
+    },
+    quit() {
+      void invoke("app_quit");
+    },
   };
 }
 
 const BRIDGE = "http://127.0.0.1:17890";
+const OLLAMA = "http://127.0.0.1:11434";
 
 function bridgeTransport(): Transport {
   let source: EventSource | undefined;
@@ -193,6 +214,22 @@ function bridgeTransport(): Transport {
       } finally {
         source!.removeEventListener("progress", onEvent);
       }
+    },
+    async ollama(path, body, timeoutMs) {
+      // 浏览器里直接问 (Ollama 放行 localhost 来的请求)
+      try {
+        const r = await fetch(`${OLLAMA}${path}`, {
+          method: body === null ? "GET" : "POST",
+          body: body ?? undefined,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        return { status: r.status, body: await r.text() };
+      } catch {
+        throw new Error("连不上 Ollama");
+      }
+    },
+    quit() {
+      window.close();
     },
   };
 }

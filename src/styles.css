@@ -522,3 +522,106 @@ button.icon:hover:not(:disabled) {
   z-index: 1;
   box-shadow: 0 -10px 12px var(--surface);
 }
+
+/* 开始菜单 */
+.menu {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse 60% 50% at 50% 36%, rgba(192, 138, 90, 0.14), transparent 70%), var(--bg);
+  animation: fade-in 0.25s ease-out;
+}
+
+.menu-icon {
+  width: 148px;
+  height: 148px;
+  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.45));
+}
+
+.menu-title {
+  margin: 14px 0 40px;
+  font-size: 44px;
+  font-weight: normal;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  color: var(--text-strong);
+}
+
+.menu-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 240px;
+}
+
+.menu-buttons button {
+  height: 46px;
+  font-size: 17px;
+  letter-spacing: 0.2em;
+  text-indent: 0.2em;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 标题和右边的按钮一行 */
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.head h2 {
+  margin: 0;
+}
+
+/* 引擎页 */
+.page {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: fade-in 0.2s ease-out;
+}
+
+.card {
+  width: 460px;
+  max-width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.card .engine-list {
+  margin-bottom: 16px;
+}
+
+.card .engine-list li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.card .engine-name {
+  flex: 1;
+}
+
+.card .engine-buttons {
+  flex-direction: row;
+}
+
+.card .engine-buttons button {
+  flex: 1;
+}

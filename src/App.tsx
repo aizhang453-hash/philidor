@@ -15,6 +15,7 @@ import {
   type EngineEntry,
 } from "./engines";
 import { transport } from "./transport";
+import iconUrl from "../src-tauri/icons/icon.svg";
 
 interface Setup {
   white: PlayerSetup;
@@ -37,6 +38,8 @@ function threadChoices(): number[] {
 }
 
 const SETUP_KEY = "philidor:setup";
+
+type Screen = "menu" | "game" | "engines";
 
 interface Notice {
   text: string;
@@ -114,6 +117,7 @@ function fixPlayer(p: PlayerSetup, engines: EngineEntry[]): PlayerSetup {
 const idleGame = new Game();
 
 export function App() {
+  const [screen, setScreen] = useState<Screen>("menu");
   const [engines, setEngines] = useState<EngineEntry[] | null>(null);
   const [setup, setSetup] = useState<Setup>(loadSetup);
   const [match, setMatch] = useState<Match | null>(null);
@@ -140,6 +144,16 @@ export function App() {
       /* 存不了就算了 */
     }
   }, [setup]);
+
+  // Esc 回开始菜单 (下着棋的时候不管)
+  useEffect(() => {
+    if (screen === "menu" || match) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") go("menu");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [screen, match]);
 
   useEffect(() => match?.subscribe(redraw), [match]);
   useEffect(() => () => match?.close(), [match]);
@@ -194,6 +208,11 @@ export function App() {
     const m = new Match(players, book);
     setMatch(m);
     void m.start();
+  }
+
+  function go(next: Screen) {
+    setNotice(null);
+    setScreen(next);
   }
 
   function leave() {
@@ -267,6 +286,25 @@ export function App() {
   const top: Color = orientation === "white" ? "black" : "white";
   const bottom: Color = orientation;
 
+  if (screen === "menu") {
+    return <Menu onPlay={() => go("game")} onEngines={() => go("engines")} onQuit={() => transport.quit()} />;
+  }
+
+  if (screen === "engines") {
+    return (
+      <EnginesPage
+        engines={engines}
+        onBack={() => go("menu")}
+        onAdd={addEngine}
+        onDownload={downloadStockfish}
+        onRemove={removeEngine}
+        adding={adding}
+        downloading={downloading}
+        notice={notice}
+      />
+    );
+  }
+
   return (
     <div className="app">
       <div className="board-col">
@@ -307,11 +345,7 @@ export function App() {
             setup={setup}
             onChange={setSetup}
             onStart={start}
-            onAdd={addEngine}
-            onDownload={downloadStockfish}
-            onRemove={removeEngine}
-            adding={adding}
-            downloading={downloading}
+            onMenu={() => go("menu")}
             notice={notice}
           />
         )}
@@ -389,11 +423,7 @@ function SetupPanel(props: {
   setup: Setup;
   onChange: (s: Setup) => void;
   onStart: () => void;
-  onAdd: () => void;
-  onDownload: () => void;
-  onRemove: (id: string) => void;
-  adding: boolean;
-  downloading: null | "checking" | number;
+  onMenu: () => void;
   notice: Notice | null;
 }) {
   const { engines, setup } = props;
@@ -407,7 +437,10 @@ function SetupPanel(props: {
   };
   return (
     <div className="setup">
-      <h2>新对局</h2>
+      <div className="head">
+        <h2>新对局</h2>
+        <button onClick={props.onMenu}>主菜单</button>
+      </div>
       <PlayerPicker color="white" value={setup.white} engines={engines ?? []} onChange={(p) => update("white", p)} />
       <div className="swap-row">
         <button className="swap" onClick={() => props.onChange({ ...setup, white: setup.black, black: setup.white })}>
@@ -437,38 +470,77 @@ function SetupPanel(props: {
         开始
       </button>
 
-      <h3>引擎</h3>
-      {engines === null ? (
-        <p className="muted">正在找引擎</p>
-      ) : (
-        <ul className="engine-list">
-          {engines.map((e) => (
-            <li key={e.id}>
-              <span className="engine-name" title={e.path}>
-                {e.name}
-              </span>
-              {engineElo(e) && <span className="rating">{engineElo(e)}</span>}
-              <button className="icon" title="删掉" onClick={() => props.onRemove(e.id)}>
-                ×
-              </button>
-            </li>
-          ))}
-          {engines.length === 0 && <li className="muted">还没有引擎</li>}
-        </ul>
-      )}
-      <div className="engine-buttons">
-        <button onClick={props.onAdd} disabled={props.adding || !engines}>
-          {props.adding ? "正在打开" : "添加引擎"}
-        </button>
-        <button onClick={props.onDownload} disabled={props.downloading !== null || !engines}>
-          {props.downloading === null
-            ? "下载最新 Stockfish"
-            : props.downloading === "checking"
-              ? "正在查最新版"
-              : `正在下载 ${props.downloading}%`}
-        </button>
-      </div>
       {props.notice && <p className={props.notice.error ? "error" : "note"}>{props.notice.text}</p>}
+    </div>
+  );
+}
+
+function Menu(props: { onPlay: () => void; onEngines: () => void; onQuit: () => void }) {
+  return (
+    <div className="menu">
+      <img className="menu-icon" src={iconUrl} alt="" draggable={false} />
+      <h1 className="menu-title">菲利多尔</h1>
+      <nav className="menu-buttons">
+        <button className="primary" onClick={props.onPlay}>
+          新对局
+        </button>
+        <button onClick={props.onEngines}>引擎</button>
+        <button onClick={props.onQuit}>退出</button>
+      </nav>
+    </div>
+  );
+}
+
+function EnginesPage(props: {
+  engines: EngineEntry[] | null;
+  onBack: () => void;
+  onAdd: () => void;
+  onDownload: () => void;
+  onRemove: (id: string) => void;
+  adding: boolean;
+  downloading: null | "checking" | number;
+  notice: Notice | null;
+}) {
+  const { engines } = props;
+  return (
+    <div className="page">
+      <div className="card">
+        <div className="head">
+          <h2>引擎</h2>
+          <button onClick={props.onBack}>主菜单</button>
+        </div>
+        {engines === null ? (
+          <p className="muted">正在找引擎</p>
+        ) : (
+          <ul className="engine-list">
+            {engines.map((e) => (
+              <li key={e.id}>
+                <span className="engine-name" title={e.path}>
+                  {e.name}
+                </span>
+                {engineElo(e) && <span className="rating">{engineElo(e)}</span>}
+                <button className="icon" title="删掉" onClick={() => props.onRemove(e.id)}>
+                  ×
+                </button>
+              </li>
+            ))}
+            {engines.length === 0 && <li className="muted">还没有引擎</li>}
+          </ul>
+        )}
+        <div className="engine-buttons">
+          <button onClick={props.onAdd} disabled={props.adding || !engines}>
+            {props.adding ? "正在打开" : "添加引擎"}
+          </button>
+          <button onClick={props.onDownload} disabled={props.downloading !== null || !engines}>
+            {props.downloading === null
+              ? "下载最新 Stockfish"
+              : props.downloading === "checking"
+                ? "正在查最新版"
+                : `正在下载 ${props.downloading}%`}
+          </button>
+        </div>
+        {props.notice && <p className={props.notice.error ? "error" : "note"}>{props.notice.text}</p>}
+      </div>
     </div>
   );
 }

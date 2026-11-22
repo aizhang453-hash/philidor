@@ -9,6 +9,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 
+mod ollama;
 mod stockfish;
 
 struct Running {
@@ -198,6 +199,20 @@ async fn stockfish_download(app: AppHandle) -> Result<stockfish::Downloaded, Str
     .map_err(|e| e.to_string())?
 }
 
+/// 问本机的大语言模型 (Ollama)。只连本机, 只许几个接口 (见 ollama.rs)
+#[tauri::command]
+async fn ollama_request(path: String, body: Option<String>, timeout_ms: u64) -> Result<ollama::Reply, String> {
+    tauri::async_runtime::spawn_blocking(move || ollama::request(&path, body.as_deref(), timeout_ms))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 开始菜单的「退出」
+#[tauri::command]
+fn app_quit(app: AppHandle) {
+    app.exit(0);
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -210,7 +225,9 @@ pub fn run() {
             engines_load,
             engines_save,
             stockfish_latest,
-            stockfish_download
+            stockfish_download,
+            ollama_request,
+            app_quit
         ])
         .build(tauri::generate_context!())
         .expect("程序启动失败")
