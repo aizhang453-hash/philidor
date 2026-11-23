@@ -6,7 +6,11 @@ export const PLAYER_AVATAR = "/avatars/player.svg";
 export const ENGINE_AVATAR = "/avatars/engine.svg";
 
 /** 引擎名字 → 它自己的头像 */
-const KNOWN: [RegExp, string][] = [[/^stockfish\b/i, "/avatars/stockfish.png"]];
+const KNOWN: [RegExp, string][] = [
+  [/^stockfish\b/i, "/avatars/stockfish.png"],
+  // 斯坦尼茨引擎: 用户给它选的图标, 彩虹深底上一只变色龙 (斯坦尼茨项目 tools/icon.mjs 画的)
+  [/^(斯坦尼茨|steinitz)/i, "/avatars/steinitz-engine.png"],
+];
 
 /** own 是引擎文件夹里找到的头像 */
 export function engineAvatar(name: string, own?: string | null): string {

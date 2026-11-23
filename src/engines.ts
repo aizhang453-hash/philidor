@@ -55,6 +55,42 @@ export async function probe(path: string): Promise<EngineEntry> {
   }
 }
 
+/** 自带的引擎 (斯坦尼茨) 编号都以 builtin- 开头; 不能删 */
+export function isBuiltin(e: EngineEntry): boolean {
+  return e.id.startsWith("builtin-");
+}
+
+/**
+ * 自带的引擎: 清单里没有就加在最后, 程序挪了地方 (路径变了) 就改过来。
+ * list 是新清单 (都没变是 null); failed 是有自带的引擎打不开 (多半是被苹果拦了)。
+ */
+export async function withBuiltin(list: EngineEntry[]): Promise<{ list: EngineEntry[] | null; failed: boolean }> {
+  let builtins: { id: string; path: string; blocked: boolean }[] = [];
+  try {
+    builtins = await transport.builtinEngines();
+  } catch {
+    return { list: null, failed: false };
+  }
+  let out = list;
+  let changed = false;
+  let failed = false;
+  for (const b of builtins) {
+    if (b.blocked) failed = true;
+    const i = out.findIndex((e) => e.id === b.id);
+    if (i >= 0 && out[i].path === b.path) continue;
+    try {
+      const entry = { ...(await probe(b.path)), id: b.id };
+      out = i >= 0 ? out.map((e, j) => (j === i ? entry : e)) : [...out, entry];
+      changed = true;
+    } catch {
+      // 打不开就先不加, 下次打开程序再试
+      failed = true;
+    }
+  }
+  if (changed) saveEngines(out);
+  return { list: changed ? out : null, failed };
+}
+
 /** 第一次打开: 把 En Croissant 里装好的引擎拿过来 */
 export async function loadEngines(): Promise<EngineEntry[]> {
   let saved: EngineEntry[] | null = null;

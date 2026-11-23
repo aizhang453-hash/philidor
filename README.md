@@ -14,6 +14,7 @@
 - 对局回顾: 引擎把一盘棋每一步看一遍, 标出好坏、精度、最佳着法 (下完的棋, 或者粘贴进来的棋谱)
 - 棋盘设置: 24 套棋子、27 种棋盘、6 套声音, 坐标、记谱用棋子图、棋子动画、高亮上一步、显示能走到哪
 - 教练: 开始菜单里选, 对局回顾时在旁边 (第一位是斯坦尼茨; 说话以后再做)
+- 自带引擎斯坦尼茨: 下得像真人, 选一个分就像那个分的人那样下
 - 下载最新的 Stockfish (下了新版换掉旧版); RubiChess 出了新版会提醒
 
 ## 怎么用
@@ -46,6 +47,9 @@ npm test
 ```
 
 `npm run tauri dev` 是开发时边改边看; `npm run tauri build` 编出正式的程序 (苹果上在 `src-tauri/target.noindex/release/bundle/macos/`)。
+
+要带上自带的斯坦尼茨, 用 `tools/build-app.sh` 编 (先把 `engines/steinitz` 连同 Python、PyTorch 打成一包, 编好菲利多尔以后放进去, 再重新签名)。打包要用的 Python 程序库 (torch、numpy、python-chess、pyinstaller) 要先装好, 路径写在 `tools/steinitz-build.sh` 里。
+斯坦尼茨更新了: `tools/steinitz-sync.sh` 重新复制, 再 `tools/steinitz-build.sh` 打包。
 
 在普通浏览器里开发界面: 先 `node tools/dev-bridge.mjs` (替 App 开引擎), 再 `npx vite`, 打开 http://localhost:1420 。
 

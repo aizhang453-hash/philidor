@@ -36,6 +36,8 @@ export interface Transport {
   stop(id: string): Promise<void>;
   /** 电脑上别的程序 (En Croissant) 装好的引擎 */
   findEngines(): Promise<FoundEngine[]>;
+  /** 菲利多尔自带的引擎 (斯坦尼茨): 编号和程序在哪 */
+  builtinEngines(): Promise<{ id: string; path: string; blocked: boolean }[]>;
   /** 选一个引擎文件, 不选返回 null */
   pickFile(): Promise<string | null>;
   /** 引擎清单 (JSON), 还没存过是 null */
@@ -91,6 +93,9 @@ function tauriTransport(): Transport {
     },
     async findEngines() {
       return invoke<FoundEngine[]>("encroissant_engines");
+    },
+    async builtinEngines() {
+      return invoke<{ id: string; path: string; blocked: boolean }[]>("builtin_engines");
     },
     async pickFile() {
       const { open } = await import("@tauri-apps/plugin-dialog");
@@ -190,6 +195,10 @@ function bridgeTransport(): Transport {
     },
     async findEngines() {
       return (await post({ op: "find" })).engines;
+    },
+    async builtinEngines() {
+      // 浏览器里开发时没有自带的引擎
+      return [];
     },
     async pickFile() {
       return window.prompt("引擎程序的路径") || null;

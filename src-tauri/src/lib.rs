@@ -140,6 +140,59 @@ fn encroissant_engines(app: AppHandle) -> Vec<FoundEngine> {
         .collect()
 }
 
+#[derive(Serialize)]
+struct BuiltinEngine {
+    id: String,
+    path: String,
+    /** 被苹果拦着 (「从网上下载的」标记去不掉) */
+    blocked: bool,
+}
+
+/// 文件上有没有「从网上下载的」标记 (com.apple.quarantine)
+fn quarantined(file: &Path) -> bool {
+    Command::new("/usr/bin/xattr")
+        .arg("-p")
+        .arg("com.apple.quarantine")
+        .arg(file)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// 从网上下载的菲利多尔, 苹果给里面每个文件都打上「从网上下载的」标记; 带着这个标记,
+/// 自带的斯坦尼茨 (没有苹果开发者签名) 一启动就被系统关掉。用户已经同意打开菲利多尔了,
+/// 这里把斯坦尼茨文件夹上的标记去掉。去不掉 (程序没拖进「应用程序」, 苹果让它在只读的地方跑) 返回 false。
+fn clear_quarantine(dir: &Path, exe: &Path) -> bool {
+    if !quarantined(exe) {
+        return true;
+    }
+    let _ = Command::new("/usr/bin/xattr")
+        .arg("-dr")
+        .arg("com.apple.quarantine")
+        .arg(dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    !quarantined(exe)
+}
+
+/// 菲利多尔自带的引擎: 编程序时放进程序里的斯坦尼茨 (tools/steinitz-build.sh 打的包, 在 Resources/steinitz/)
+#[tauri::command]
+fn builtin_engines(app: AppHandle) -> Vec<BuiltinEngine> {
+    let Ok(dir) = app.path().resource_dir() else {
+        return vec![];
+    };
+    let folder = dir.join("steinitz");
+    let exe = folder.join("steinitz");
+    if !exe.is_file() {
+        return vec![];
+    }
+    let blocked = !clear_quarantine(&folder, &exe);
+    vec![BuiltinEngine { id: "builtin-steinitz".into(), path: exe.to_string_lossy().into_owned(), blocked }]
+}
+
 /// 菲利多尔自己放引擎的文件夹 (苹果上是 ~/Library/Application Support/io.github.aizhang453-hash.philidor/engines)
 fn engines_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
@@ -251,6 +304,7 @@ pub fn run() {
             engine_send,
             engine_stop,
             encroissant_engines,
+            builtin_engines,
             engines_load,
             engines_save,
             stockfish_latest,

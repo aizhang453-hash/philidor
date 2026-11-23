@@ -8,6 +8,8 @@ import {
   addDownloaded,
   engineElo,
   fillRatings,
+  isBuiltin,
+  withBuiltin,
   getLatestStockfish,
   loadEngines,
   probe,
@@ -149,12 +151,18 @@ export function App() {
   const [downloading, setDownloading] = useState<null | "checking" | number>(null);
 
   useEffect(() => {
-    loadEngines().then((list) => {
-      setEngines(list);
-      setSetup((s) => ({ ...s, white: fixPlayer(s.white, list), black: fixPlayer(s.black, list) }));
-      updateRatings(list);
-      void findUpdates(list).then(setUpdates);
-    });
+    loadEngines()
+      .then(async (list) => {
+        const b = await withBuiltin(list);
+        if (b.failed) setNotice({ text: "斯坦尼茨打不开，把菲利多尔拖进「应用程序」以后再打开", error: true });
+        return b.list ?? list;
+      })
+      .then((list) => {
+        setEngines(list);
+        setSetup((s) => ({ ...s, white: fixPlayer(s.white, list), black: fixPlayer(s.black, list) }));
+        updateRatings(list);
+        void findUpdates(list).then(setUpdates);
+      });
   }, []);
 
   /** 还不知道等级分的引擎 (像刚下载的新版 Stockfish) 去 En Croissant 的清单里找 */
@@ -375,7 +383,7 @@ export function App() {
   }
 
   function removeEngine(id: string) {
-    const list = (engines ?? []).filter((e) => e.id !== id);
+    const list = (engines ?? []).filter((e) => e.id !== id || isBuiltin(e));
     setEngines(list);
     saveEngines(list);
     setSetup((s) => ({ ...s, white: fixPlayer(s.white, list), black: fixPlayer(s.black, list) }));
@@ -746,9 +754,11 @@ function EnginesPage(props: {
                 </span>
                 {props.updates[e.id] && <span className="update">有新版 {props.updates[e.id]}</span>}
                 {engineElo(e) && <span className="rating">{engineElo(e)}</span>}
-                <button className="icon" title="删掉" onClick={() => props.onRemove(e.id)}>
-                  ×
-                </button>
+                {!isBuiltin(e) && (
+                  <button className="icon" title="删掉" onClick={() => props.onRemove(e.id)}>
+                    ×
+                  </button>
+                )}
               </li>
             ))}
             {engines.length === 0 && <li className="muted">还没有引擎</li>}
