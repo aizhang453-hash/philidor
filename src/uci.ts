@@ -56,6 +56,41 @@ export function cleanName(name: string): string {
     .trim();
 }
 
+/** 引擎的评分: cp 是百分之一个兵 (从轮到走的一方看), mate 是几步将死 (负数是被将死) */
+export type Score = { cp: number } | { mate: number };
+
+export interface InfoLine {
+  depth: number;
+  multipv: number;
+  score: Score;
+  pv: string[];
+}
+
+/** 读引擎想的时候报的 info 行 (要有分数和走法) */
+export function parseInfo(line: string): InfoLine | undefined {
+  if (!line.startsWith("info ") || !/\bpv\s/.test(line)) return undefined;
+  const t = line.split(/\s+/);
+  let depth = 0;
+  let multipv = 1;
+  let score: Score | undefined;
+  let pv: string[] = [];
+  for (let i = 1; i < t.length; i++) {
+    if (t[i] === "depth") depth = Number(t[++i]);
+    else if (t[i] === "multipv") multipv = Number(t[++i]);
+    else if (t[i] === "score") {
+      const kind = t[++i];
+      const v = Number(t[++i]);
+      if (t[i + 1] === "lowerbound" || t[i + 1] === "upperbound") return undefined;
+      score = kind === "mate" ? { mate: v } : { cp: v };
+    } else if (t[i] === "pv") {
+      pv = t.slice(i + 1);
+      break;
+    }
+  }
+  if (!score || pv.length === 0) return undefined;
+  return { depth, multipv, score, pv };
+}
+
 type Waiter = { test: (line: string) => boolean; resolve: (line: string) => void; reject: (e: Error) => void };
 
 let counter = 0;
@@ -150,9 +185,9 @@ export class UciEngine {
   }
 
   /** 让引擎想, go 是 go 后面那一段 (像「movetime 1000」或「wtime 60000 btime 60000 winc 0 binc 0」), 返回它走的棋 (UCI 写法) */
-  search(moves: string[], go: string, timeout: number): Promise<string> {
+  search(moves: string[], go: string, timeout: number, fen?: string): Promise<string> {
     if (this.searching) throw new Error("引擎还在想上一步");
-    this.send(`position startpos${moves.length ? " moves " + moves.join(" ") : ""}`);
+    this.send(`position ${fen ? "fen " + fen : "startpos"}${moves.length ? " moves " + moves.join(" ") : ""}`);
     this.send(`go ${go}`);
     const p = this.waitFor((l) => /^bestmove\b/.test(l), timeout, "引擎想太久没出棋").then(
       (line) => line.split(/\s+/)[1] ?? "",
@@ -163,6 +198,25 @@ export class UciEngine {
     };
     p.then(clear, clear);
     return p;
+  }
+
+  /** 分析一个局面: 看最好的几步 (multipv 条), 每条有分数和往下怎么走 */
+  async analyse(moves: string[], go: string, multipv: number, timeout: number, fen?: string): Promise<InfoLine[]> {
+    if (this.searching) throw new Error("引擎还在想上一步");
+    if (this.has("MultiPV")) this.setOption("MultiPV", multipv);
+    const lines = new Map<number, InfoLine>();
+    const listen = (l: string) => {
+      const info = parseInfo(l);
+      if (info) lines.set(info.multipv, info);
+      return false;
+    };
+    this.waiters.push({ test: listen, resolve: () => {}, reject: () => {} });
+    try {
+      await this.search(moves, go, timeout, fen);
+    } finally {
+      this.waiters = this.waiters.filter((w) => w.test !== listen);
+    }
+    return [...lines.values()].sort((a, b) => a.multipv - b.multipv);
   }
 
   /** 叫正在想的引擎停下, 等它把那步交出来 (扔掉) */

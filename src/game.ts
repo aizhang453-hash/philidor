@@ -50,6 +50,11 @@ export class Game {
     return this.pos.turn;
   }
 
+  /** 每一步之后的局面 (第 0 个是开局) */
+  get history(): readonly Chess[] {
+    return this.positions;
+  }
+
   get fen(): string {
     return makeFen(this.pos.toSetup());
   }

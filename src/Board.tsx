@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { Chessground } from "@lichess-org/chessground";
 import type { Api } from "@lichess-org/chessground/api";
 import type { Key } from "@lichess-org/chessground/types";
+import type { DrawShape } from "@lichess-org/chessground/draw";
 import type { Color } from "./game";
 
 export interface BoardProps {
@@ -15,6 +16,9 @@ export interface BoardProps {
   lastMove?: [string, string];
   check: boolean;
   onMove: (from: string, to: string) => void;
+  /** 棋盘上画的箭头 */
+  shapes?: DrawShape[];
+  className?: string;
   children?: React.ReactNode;
 }
 
@@ -57,8 +61,12 @@ export function Board(props: BoardProps) {
     });
   }, [props.fen, props.orientation, props.turnColor, props.movableColor, props.dests, props.lastMove, props.check]);
 
+  useEffect(() => {
+    api.current?.setAutoShapes(props.shapes ?? []);
+  }, [props.shapes]);
+
   return (
-    <div className="board">
+    <div className={`board${props.className ? " " + props.className : ""}`}>
       <div ref={el} className="cg-host" />
       {props.children}
     </div>

@@ -68,6 +68,8 @@ export class Match {
   private clock: Clock;
   /** 每一步走之前的棋钟, 悔棋时退回去 */
   private clockBefore: Clock[] = [];
+  /** 每一步用了多少毫秒 (对局回顾显示) */
+  readonly moveTimes: number[] = [];
   private turnStart = 0;
   private flagTimer: ReturnType<typeof setTimeout> | undefined;
   /** 还在开局库里 (一出库就不再查) */
@@ -213,6 +215,7 @@ export class Match {
     const n = this.game.plies.length;
     if (this.clockBefore[n]) this.clock = { ...this.clockBefore[n] };
     this.clockBefore.length = n;
+    this.moveTimes.length = n;
     this.error = null;
     this.inBook = true;
     this.startTurn();
@@ -255,6 +258,7 @@ export class Match {
   /** 走完一步: 扣掉用的时间, 加上每步加的秒数, 轮到对方 */
   private afterMove(color: Color, used: number, before: Clock) {
     this.clockBefore.push(before);
+    this.moveTimes.push(this.paused ? 0 : used);
     const left = this.clock[color];
     const tc = this.players[color].time;
     if (left !== null && tc) {

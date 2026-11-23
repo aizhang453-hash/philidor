@@ -19,6 +19,9 @@ import { transport } from "./transport";
 import { PLAYER_AVATAR, engineAvatar, loadOwnAvatars } from "./avatars";
 import { findUpdates } from "./updates";
 import iconUrl from "../src-tauri/icons/icon.svg";
+import { FlipIcon, ReviewScreen, type ReviewSource } from "./ReviewScreen";
+import type { Analysis } from "./analysis";
+import { importPgn } from "./pgnImport";
 
 interface Setup {
   white: PlayerSetup;
@@ -42,7 +45,7 @@ function threadChoices(): number[] {
 
 const SETUP_KEY = "philidor:setup";
 
-type Screen = "menu" | "game" | "engines";
+type Screen = "menu" | "game" | "engines" | "review" | "import";
 
 interface Notice {
   text: string;
@@ -134,6 +137,10 @@ export function App() {
   const [sync, setSync] = useState(0);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [adding, setAdding] = useState(false);
+  /** 正在回顾的棋 (和分析过的结果, 回到对局再进来不用重新分析) */
+  const [review, setReview] = useState<{ source: ReviewSource; analysis: Analysis | null } | null>(null);
+  /** 回顾页「返回」回哪里 */
+  const [reviewBack, setReviewBack] = useState<Screen>("game");
   /** 下载 Stockfish: null 没在下, "checking" 在查最新版, 数字是百分之几 */
   const [downloading, setDownloading] = useState<null | "checking" | number>(null);
 
@@ -255,6 +262,53 @@ export function App() {
     match?.close();
     setMatch(null);
     setPromotion(null);
+    setReview(null);
+  }
+
+  /** 粘贴的棋谱拿去回顾 */
+  function reviewPgn(text: string): string | null {
+    try {
+      const g = importPgn(text);
+      setReview({
+        source: {
+          players: { white: { name: g.white, avatar: PLAYER_AVATAR }, black: { name: g.black, avatar: PLAYER_AVATAR } },
+          plies: g.plies,
+          positions: g.positions,
+          moveTimes: g.moveTimes,
+          humans: [],
+        },
+        analysis: null,
+      });
+      setReviewBack("import");
+      setScreen("review");
+      return null;
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  /** 下完的这盘棋拿去回顾 */
+  function startReview() {
+    if (!match) return;
+    if (!review) {
+      const players = {} as ReviewSource["players"];
+      for (const c of ["white", "black"] as Color[]) {
+        const p = match.players[c];
+        players[c] = { name: p.name, avatar: p.kind === "engine" ? engineAvatar(p.name, ownAvatars[p.path]) : PLAYER_AVATAR };
+      }
+      setReview({
+        source: {
+          players,
+          plies: [...match.game.plies],
+          positions: [...match.game.history],
+          moveTimes: [...match.moveTimes],
+          humans: match.humans,
+        },
+        analysis: null,
+      });
+    }
+    setReviewBack("game");
+    go("review");
   }
 
   function onMove(from: string, to: string) {
@@ -327,11 +381,28 @@ export function App() {
     return (
       <Menu
         onPlay={() => go("game")}
+        onImport={() => go("import")}
         onEngines={() => go("engines")}
         onQuit={() => transport.quit()}
         hasUpdate={(engines ?? []).some((e) => updates[e.id])}
       />
     );
+  }
+
+  if (screen === "review" && review) {
+    return (
+      <ReviewScreen
+        source={review.source}
+        engines={engines ?? []}
+        cached={review.analysis}
+        onAnalysed={(a) => setReview((r) => (r ? { ...r, analysis: a } : r))}
+        onBack={() => go(reviewBack)}
+      />
+    );
+  }
+
+  if (screen === "import") {
+    return <ImportPage onBack={() => go("menu")} onReview={reviewPgn} />;
   }
 
   if (screen === "engines") {
@@ -381,10 +452,15 @@ export function App() {
         </Board>
         <PlayerBar color={bottom} match={match} setup={setup} engines={engines} avatars={ownAvatars} />
       </div>
+      <div className="board-tools">
+        <button className="tool" title="翻转棋盘" onClick={() => setOrientation((o) => (o === "white" ? "black" : "white"))}>
+          <FlipIcon />
+        </button>
+      </div>
 
       <aside className="panel">
         {match ? (
-          <PlayPanel match={match} onFlip={() => setOrientation((o) => (o === "white" ? "black" : "white"))} onLeave={leave} />
+          <PlayPanel match={match} onReview={startReview} onLeave={leave} />
         ) : (
           <SetupPanel
             engines={engines}
@@ -532,7 +608,7 @@ function SetupPanel(props: {
   );
 }
 
-function Menu(props: { onPlay: () => void; onEngines: () => void; onQuit: () => void; hasUpdate: boolean }) {
+function Menu(props: { onPlay: () => void; onImport: () => void; onEngines: () => void; onQuit: () => void; hasUpdate: boolean }) {
   return (
     <div className="menu">
       <img className="menu-icon" src={iconUrl} alt="" draggable={false} />
@@ -541,12 +617,45 @@ function Menu(props: { onPlay: () => void; onEngines: () => void; onQuit: () => 
         <button className="primary" onClick={props.onPlay}>
           新对局
         </button>
+        <button onClick={props.onImport}>导入棋谱</button>
         <button onClick={props.onEngines}>
           引擎
           {props.hasUpdate && <span className="dot" title="有引擎出了新版" />}
         </button>
         <button onClick={props.onQuit}>退出</button>
       </nav>
+    </div>
+  );
+}
+
+function ImportPage(props: { onBack: () => void; onReview: (text: string) => string | null }) {
+  const [text, setText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="page">
+      <div className="card import">
+        <div className="head">
+          <h2>导入棋谱</h2>
+          <button onClick={props.onBack}>主菜单</button>
+        </div>
+        <div className="segmented wide">
+          <button className="on">对局回顾</button>
+          <button disabled>对局浏览器</button>
+        </div>
+        <textarea
+          value={text}
+          placeholder="把棋谱粘贴在这里"
+          spellCheck={false}
+          onChange={(e) => {
+            setText(e.target.value);
+            setError(null);
+          }}
+        />
+        <button className="primary" disabled={!text.trim()} onClick={() => setError(props.onReview(text))}>
+          开始
+        </button>
+        {error && <p className="error">{error}</p>}
+      </div>
     </div>
   );
 }
@@ -768,7 +877,7 @@ function NumberInput(props: { value: number; min: number; max: number; onChange:
   );
 }
 
-function PlayPanel(props: { match: Match; onFlip: () => void; onLeave: () => void }) {
+function PlayPanel(props: { match: Match; onReview: () => void; onLeave: () => void }) {
   const { match } = props;
   const game = match.game;
   const outcome = game.outcome();
@@ -830,8 +939,12 @@ function PlayPanel(props: { match: Match; onFlip: () => void; onLeave: () => voi
             {confirmResign ? "确定认输" : "认输"}
           </button>
         )}
-        <button onClick={props.onFlip}>翻转棋盘</button>
-        <button className={outcome || match.status === "failed" ? "primary" : ""} onClick={props.onLeave}>
+        {outcome && game.plies.length > 0 && (
+          <button className="primary" onClick={props.onReview}>
+            对局回顾
+          </button>
+        )}
+        <button className={!outcome && match.status === "failed" ? "primary" : ""} onClick={props.onLeave}>
           新对局
         </button>
       </div>
