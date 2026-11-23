@@ -171,7 +171,7 @@ export class Match {
     const ply = this.game.play(uci);
     if (!ply) return false;
     this.afterMove(color, used, before);
-    playMoveSound(ply.capture);
+    playMoveSound(ply.capture, ply.check);
     this.emit();
     this.next();
     return true;
@@ -357,7 +357,7 @@ export class Match {
       this.game.forfeit(color);
     } else {
       this.afterMove(color, used, before);
-      playMoveSound(ply.capture);
+      playMoveSound(ply.capture, ply.check);
     }
     this.emit();
     this.next();

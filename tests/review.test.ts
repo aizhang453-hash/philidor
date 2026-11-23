@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classify, gameAccuracy, moveAccuracy, reviewGame, winPercent, evalText, nextKey, type PosEval } from "../src/review";
+import { classify, gameAccuracy, moveAccuracy, reviewGame, winPercent, evalText, evalWords, nextKey, type PosEval } from "../src/review";
 import { parseInfo } from "../src/uci";
 import { evalFromLines, bookFlags } from "../src/analysis";
 import { importPgn } from "../src/pgnImport";
@@ -15,6 +15,8 @@ describe("对局回顾", () => {
     expect(winPercent({ mate: 3 })).toBeGreaterThan(97);
     expect(evalText({ cp: 134, pv: [] })).toBe("+1.34");
     expect(evalText({ mate: -2, pv: [] })).toBe("-M2");
+    expect(evalWords({ mate: -2, pv: [] })).toBe("2步杀");
+    expect(evalWords({ cp: 134, pv: [] })).toBe("+1.34");
   });
 
   it("读引擎的 info 行", () => {
@@ -63,9 +65,9 @@ describe("对局回顾", () => {
 
   it("棋谱: 名字、王车易位、用时", () => {
     const g = importPgn(
-      '[White "Eason"]\n[Black "Coach"]\n[TimeControl "600+5"]\n\n1. e4 {[%clk 0:09:58]} 1... e5 {[%clk 0:09:55]} 2. Nf3 {[%clk 0:09:50]} 2... Nc6 {[%clk 0:09:40]} 3. Bc4 {[%clk 0:09:45]} 3... Nf6 {[%clk 0:09:41]} 4. O-O {[%clk 0:09:40]} *',
+      '[White "Tester"]\n[Black "Coach"]\n[TimeControl "600+5"]\n\n1. e4 {[%clk 0:09:58]} 1... e5 {[%clk 0:09:55]} 2. Nf3 {[%clk 0:09:50]} 2... Nc6 {[%clk 0:09:40]} 3. Bc4 {[%clk 0:09:45]} 3... Nf6 {[%clk 0:09:41]} 4. O-O {[%clk 0:09:40]} *',
     );
-    expect(g.white).toBe("Eason");
+    expect(g.white).toBe("Tester");
     expect(g.plies[6].uci).toBe("e1g1");
     expect(g.plies[6].san).toBe("O-O");
     expect(g.moveTimes[0]).toBe(2000);

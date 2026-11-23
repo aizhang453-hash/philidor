@@ -947,6 +947,10 @@ button.icon:hover:not(:disabled) {
   margin-top: 4px;
   padding: 12px;
   font-size: 18px;
+  /* 钉在总结的底下, 上面的数字往下滑也看得见 (跟 chess.com 一样) */
+  position: sticky;
+  bottom: 0;
+  flex: none;
 }
 
 .bubble {
@@ -954,6 +958,9 @@ button.icon:hover:not(:disabled) {
   border-radius: 8px;
   padding: 10px 12px;
   flex: none;
+  /* 留出两行字的地方: 「解析」多出一行时下面的按钮不跳 */
+  min-height: 100px;
+  box-sizing: border-box;
 }
 
 .bubble-head {
@@ -1184,4 +1191,118 @@ button.icon:hover:not(:disabled) {
   height: 1px;
   background: var(--border);
   margin: 4px 0;
+}
+
+/* 走子记录里选中的那步: 字一律白色 (红色的错着在棕底上看不清) */
+.rmove.current > span {
+  color: #fff !important;
+}
+
+/* 讲话的框里「解析」那一行: 往下怎么走, 点哪步翻到哪步 */
+.bubble-line {
+  margin: 8px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  font-size: 15px;
+  color: var(--text-strong);
+}
+
+.bubble-line span {
+  cursor: pointer;
+  padding: 0 3px;
+  border-radius: 3px;
+}
+
+.bubble-line span.current {
+  background: var(--primary-strong);
+  color: #fff;
+}
+
+/* 记谱里的棋子小图 (字体里的偏小) */
+.fig {
+  font-size: 1.3em;
+  line-height: 1;
+}
+
+/* 教练: 左边头像, 右边讲话的框 (框左边一个小尖角指着头像) */
+.coach {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex: none;
+}
+
+.coach-face {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  flex: none;
+}
+
+.coach .bubble {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.coach .bubble::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 20px;
+  border-style: solid;
+  border-width: 8px 8px 8px 0;
+  border-color: transparent var(--surface-2) transparent transparent;
+}
+
+.analysing {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 分析进度: 一条宽的, 中间写百分比 */
+.progress.big {
+  position: relative;
+  height: 36px;
+  border-radius: 6px;
+}
+
+.progress.big span {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 18px;
+  color: var(--text-strong);
+}
+
+.bubble > .bubble-text:first-child {
+  margin-top: 0;
+}
+
+/* 讲话的框照 chess.com: 白底黑字, 一眼看得出是在说话 */
+.bubble {
+  background: #fff;
+  color: #2b2b2b;
+}
+
+.bubble .bubble-title {
+  color: #2b2b2b;
+}
+
+.bubble .bubble-text,
+.bubble .bubble-line {
+  color: #3a3a3a;
+}
+
+.bubble .eval-chip:not(.dark) {
+  background: #ebe8e2;
+}
+
+.coach .bubble::before {
+  border-color: transparent #fff transparent transparent;
 }

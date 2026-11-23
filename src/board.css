@@ -24,7 +24,7 @@ cg-board {
   -webkit-user-select: none;
   line-height: 0;
   background-size: cover;
-  background-image: url("/board/gray.svg");
+  background-image: var(--board-image, url("/board/gray.svg"));
 }
 
 cg-board square {

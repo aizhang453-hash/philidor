@@ -1,5 +1,6 @@
 // 名字旁边的默认头像 (自己画的):
 //   public/avatars/player.svg  玩家: 灰蓝底上一个象牙色的兵 (跟程序图标的兵一样)
+//   public/avatars/coach.svg   教练 (还没有教练角色时先用): 胡桃木底上一个象牙色的兵 (就是程序图标的样子)
 //   public/avatars/engine.svg  没有自己头像的引擎: 胡桃木底上一块电脑芯片
 // 用法: node tools/avatar.mjs
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -54,4 +55,5 @@ const chip = `  <g fill="url(#ivory)">${pins}
 mkdirSync("public/avatars", { recursive: true });
 writeFileSync("public/avatars/player.svg", tile("#6f7c8c", "#363d47", pawn));
 writeFileSync("public/avatars/engine.svg", tile("#9a6844", "#4a2a15", chip));
-console.log("画好了 public/avatars/player.svg、engine.svg");
+writeFileSync("public/avatars/coach.svg", tile("#9a6844", "#4a2a15", pawn));
+console.log("画好了 public/avatars/player.svg、engine.svg、coach.svg");

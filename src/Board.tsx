@@ -5,6 +5,7 @@ import type { Api } from "@lichess-org/chessground/api";
 import type { Key } from "@lichess-org/chessground/types";
 import type { DrawShape } from "@lichess-org/chessground/draw";
 import type { Color } from "./game";
+import { useBoardSettings } from "./boardSettings";
 
 export interface BoardProps {
   fen: string;
@@ -27,17 +28,18 @@ export function Board(props: BoardProps) {
   const api = useRef<Api | null>(null);
   const onMove = useRef(props.onMove);
   onMove.current = props.onMove;
+  const look = useBoardSettings();
 
   useEffect(() => {
     api.current = Chessground(el.current!, {
-      animation: { enabled: true, duration: 200 },
-      highlight: { lastMove: true, check: true },
+      animation: { enabled: look.animation > 0, duration: look.animation },
+      highlight: { lastMove: look.lastMove, check: true },
       premovable: { enabled: false },
       draggable: { enabled: true, showGhost: true },
-      coordinates: true,
+      coordinates: look.coords !== "off",
       movable: {
         free: false,
-        showDests: true,
+        showDests: look.dests,
         events: { after: (from, to) => onMove.current(from, to) },
       },
     });
@@ -64,6 +66,24 @@ export function Board(props: BoardProps) {
   useEffect(() => {
     api.current?.setAutoShapes(props.shapes ?? []);
   }, [props.shapes]);
+
+  // 棋盘设置改了 (动画、高亮上一步、坐标、能走到哪)
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    const a = api.current;
+    if (!a) return;
+    a.set({
+      animation: { enabled: look.animation > 0, duration: look.animation },
+      highlight: { lastMove: look.lastMove, check: true },
+      coordinates: look.coords !== "off",
+      movable: { showDests: look.dests },
+    });
+    a.redrawAll();
+  }, [look.animation, look.lastMove, look.coords, look.dests]);
 
   return (
     <div className={`board${props.className ? " " + props.className : ""}`}>

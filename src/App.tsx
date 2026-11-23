@@ -20,6 +20,8 @@ import { PLAYER_AVATAR, engineAvatar, loadOwnAvatars } from "./avatars";
 import { findUpdates } from "./updates";
 import iconUrl from "../src-tauri/icons/icon.svg";
 import { FlipIcon, ReviewScreen, type ReviewSource } from "./ReviewScreen";
+import { BoardSettingsDialog, GearIcon, San } from "./BoardOptions";
+
 import type { Analysis } from "./analysis";
 import { importPgn } from "./pgnImport";
 
@@ -134,6 +136,7 @@ export function App() {
   const [, redraw] = useReducer((x: number) => x + 1, 0);
   const [orientation, setOrientation] = useState<Color>("white");
   const [promotion, setPromotion] = useState<{ from: string; to: string } | null>(null);
+  const [boardSettingsOpen, setBoardSettingsOpen] = useState(false);
   const [sync, setSync] = useState(0);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [adding, setAdding] = useState(false);
@@ -192,11 +195,14 @@ export function App() {
   useEffect(() => {
     if (screen === "menu" || match) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") go("menu");
+      if (e.key !== "Escape") return;
+      // 开着设置时 Esc 只关设置
+      if (boardSettingsOpen) setBoardSettingsOpen(false);
+      else go("menu");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [screen, match]);
+  }, [screen, match, boardSettingsOpen]);
 
   useEffect(() => match?.subscribe(redraw), [match]);
   useEffect(() => () => match?.close(), [match]);
@@ -453,10 +459,14 @@ export function App() {
         <PlayerBar color={bottom} match={match} setup={setup} engines={engines} avatars={ownAvatars} />
       </div>
       <div className="board-tools">
+        <button className="tool" title="设置" onClick={() => setBoardSettingsOpen(true)}>
+          <GearIcon />
+        </button>
         <button className="tool" title="翻转棋盘" onClick={() => setOrientation((o) => (o === "white" ? "black" : "white"))}>
           <FlipIcon />
         </button>
       </div>
+      {boardSettingsOpen && <BoardSettingsDialog onClose={() => setBoardSettingsOpen(false)} />}
 
       <aside className="panel">
         {match ? (
@@ -911,8 +921,10 @@ function PlayPanel(props: { match: Match; onReview: () => void; onLeave: () => v
         {rows.map((r) => (
           <div className="move-row" key={r.n}>
             <span className="move-no">{r.n}.</span>
-            <span className={`move${r.n * 2 - 1 === game.plies.length ? " current" : ""}`}>{r.white}</span>
-            <span className={`move${r.n * 2 === game.plies.length ? " current" : ""}`}>{r.black ?? ""}</span>
+            <span className={`move${r.n * 2 - 1 === game.plies.length ? " current" : ""}`}>
+              {r.white && <San san={r.white} color="white" />}
+            </span>
+            <span className={`move${r.n * 2 === game.plies.length ? " current" : ""}`}>{r.black && <San san={r.black} color="black" />}</span>
           </div>
         ))}
       </div>

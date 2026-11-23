@@ -90,6 +90,12 @@ export function evalText(e: PosEval | undefined): string {
   return (v > 0 ? "+" : "") + v.toFixed(2);
 }
 
+/** 讲话的框里的分数: 几步能将死写成「几步杀」 */
+export function evalWords(e: PosEval | undefined): string {
+  if (e && e.mate !== undefined && e.mate !== 0) return `${Math.abs(e.mate)}步杀`;
+  return evalText(e);
+}
+
 export interface MoveReview {
   ply: number;
   color: Color;

@@ -1,6 +1,6 @@
 // 对局回顾的页面: 先让引擎分析, 再看总结, 再一步步看 (关键的步停下来、看最佳着法、看往下怎么走)。
 // 教练 (头像和说的话) 以后再做, 现在讲话的框里只放好坏和分数。
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { DrawShape } from "@lichess-org/chessground/draw";
 import type { Chess } from "chessops/chess";
 import { normalizeMove } from "chessops/chess";
@@ -12,11 +12,13 @@ import { Board } from "./Board";
 import { ClsIcon, CLS_COLOR } from "./ClsIcon";
 import type { Color, Ply } from "./game";
 import { analyseGame, type Analysis } from "./analysis";
-import { BAD, CLS_NAME, CLS_ORDER, evalText, nextKey, whiteWins, type GameReview } from "./review";
+import { BAD, CLS_NAME, CLS_ORDER, evalText, evalWords, nextKey, whiteWins, type GameReview, type PosEval } from "./review";
 import { chineseOpening, loadOpenings } from "./openings";
 import { AREAS, AREA_NAME } from "./gameRating";
 import { loadBook } from "./book";
 import { playMoveSound } from "./sound";
+import { BoardOptions, GearIcon, San, Toggle } from "./BoardOptions";
+import { useBoardSettings } from "./boardSettings";
 import type { EngineEntry } from "./engines";
 import {
   DELAYS,
@@ -49,6 +51,8 @@ interface Line {
   checks: boolean[];
   /** 走到第几步了 (0 是还没走) */
   at: number;
+  /** 还在自己一步步走 (手动翻过一次就不再自己走) */
+  auto: boolean;
 }
 
 const MAX_LINE = 8;
@@ -76,13 +80,9 @@ function playLine(base: Chess, ucis: string[]) {
 const moveNo = (ply: number) => Math.ceil(ply / 2);
 
 /** 一段变化写成「1... e5 2. dxe5」 */
-function lineWords(base: number, sans: string[]) {
-  return sans.map((san, i) => {
-    const ply = base + i + 1;
-    const white = ply % 2 === 1;
-    const prefix = white ? `${moveNo(ply)}. ` : i === 0 ? `${moveNo(ply)}... ` : "";
-    return prefix + san;
-  });
+/** 第 ply 个半回合前面写的步数: 白方「3. 」, 一段的第一步是黑方「3... 」 */
+function movePrefix(ply: number, first: boolean) {
+  return ply % 2 === 1 ? `${moveNo(ply)}. ` : first ? `${moveNo(ply)}... ` : "";
 }
 
 function pickEngine(engines: EngineEntry[], id: string): EngineEntry | undefined {
@@ -115,6 +115,8 @@ export function ReviewScreen(props: {
   const [autoplay, setAutoplay] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const engine = pickEngine(engines, settings.engine);
+  // 换了「记谱」要重画走子记录
+  useBoardSettings();
 
   function setSettings(s: ReviewSettings) {
     setSettingsState(s);
@@ -164,34 +166,41 @@ export function ReviewScreen(props: {
     setRun((r) => r + 1);
   }
 
-  // 看的局面
-  const shown = line && line.at > 0 ? line.fens[line.at - 1] : makeFen(source.positions[ply].toSetup());
-  const shownPos = line && line.at > 0 ? null : source.positions[ply];
-  const lastMove: [string, string] | undefined =
-    line && line.at > 0 ? line.squares[line.at - 1] : ply > 0 ? [source.plies[ply - 1].from, source.plies[ply - 1].to] : undefined;
+  // 看的局面: 在一段变化里走了几步就是变化里的; 不然是棋谱里的 (变化一步还没走时, 是变化开始的那个局面:
+  // 「最佳」退回去是走错以前的局面)
+  const inLine = !!line && line.at > 0;
+  const atPly = line ? line.base : ply;
+  const shown = inLine ? line!.fens[line!.at - 1] : makeFen(source.positions[atPly].toSetup());
+  const shownPos = inLine ? null : source.positions[atPly];
+  const lastMove: [string, string] | undefined = inLine
+    ? line!.squares[line!.at - 1]
+    : atPly > 0
+      ? [source.plies[atPly - 1].from, source.plies[atPly - 1].to]
+      : undefined;
   const turn: Color = shown.split(" ")[1] === "w" ? "white" : "black";
-  const mr = review && ply > 0 && !(line && line.at > 0) ? review.moves[ply - 1] : undefined;
+  const mr = review && atPly > 0 && !inLine ? review.moves[atPly - 1] : undefined;
 
   const shapes = useMemo<DrawShape[]>(() => {
-    if (!analysis || !mr || !settings.arrows || mode !== "step") return [];
+    if (!analysis || !mr || !settings.arrows || mode !== "step" || line) return [];
     if (!BAD.includes(mr.cls) && mr.cls !== "good") return [];
     const best = analysis.evals[ply - 1].best;
     if (!best || best === mr.uci) return [];
     return [{ orig: best.slice(0, 2), dest: best.slice(2, 4), brush: "green" } as DrawShape];
-  }, [analysis, mr, settings.arrows, mode, ply]);
+  }, [analysis, mr, settings.arrows, mode, ply, line]);
 
   function go(p: number, sound = false) {
     const target = Math.max(0, Math.min(n, p));
-    if (sound && target === ply + 1) playMoveSound(source.plies[target - 1].capture);
+    if (sound && target === ply + 1) playMoveSound(source.plies[target - 1].capture, source.plies[target - 1].check);
     setLine(null);
     setPly(target);
   }
 
-  function stepLine(at: number) {
+  /** 在变化里翻到第 at 步; auto 是「解析时自动走」自己翻的, 不是的话 (手动翻) 就不再自己走 */
+  function stepLine(at: number, auto = false) {
     if (!line) return;
     const target = Math.max(0, Math.min(line.ucis.length, at));
-    if (target === line.at + 1) playMoveSound(line.captures[target - 1]);
-    setLine({ ...line, at: target });
+    if (target === line.at + 1) playMoveSound(line.captures[target - 1], line.checks[target - 1]);
+    setLine({ ...line, at: target, auto: auto && line.auto });
   }
 
   function startLine(kind: Line["kind"]) {
@@ -202,20 +211,36 @@ export function ReviewScreen(props: {
     const pv = kind === "best" ? analysis.evals[base].pv.slice(0, 1) : analysis.evals[base].pv;
     if (!pv.length) return;
     setAutoplay(false);
-    setLine({ kind, base, ...playLine(source.positions[base], pv), at: kind === "best" ? 1 : 0 });
+    setLine({ kind, base, ...playLine(source.positions[base], pv), at: kind === "best" ? 1 : 0, auto: true });
   }
 
+  /** 上一步: 摆出来的那几步里往回翻, 翻到头就收起来; 不然是棋谱的上一步 */
+  function back() {
+    if (!line) go(ply - 1);
+    else if (line.at > 0) stepLine(line.at - 1);
+    else go(line.base);
+  }
+
+  /** 下一步: 摆出来的那几步里往下翻, 翻到头接着走棋谱的下一步 */
+  function forward() {
+    if (!line) go(ply + 1, true);
+    else if (line.at < line.ucis.length) stepLine(line.at + 1);
+    else go(line.base + 1, true);
+  }
+
+  /** 绿按钮: 跳到下一个关键步; 后面没有关键步了就自己一步一步往下走 (自动播放), 走到最后点「亮点」回到总结 */
   function nextKeyMove() {
     if (!review) return;
     const k = nextKey(review, ply, only);
-    if (k === undefined) setMode("summary");
-    else go(k);
+    if (k !== undefined) go(k);
+    else if (ply < n) setAutoplay(true);
+    else setMode("summary");
   }
 
   // 解析时自己一步步走
   useEffect(() => {
-    if (!line || !settings.autoLine || line.at >= line.ucis.length) return;
-    const t = setTimeout(() => stepLine(line.at + 1), line.at === 0 ? 500 : 1000);
+    if (!line || !line.auto || !settings.autoLine || line.at >= line.ucis.length) return;
+    const t = setTimeout(() => stepLine(line.at + 1, true), line.at === 0 ? 500 : 1000);
     return () => clearTimeout(t);
   }, [line, settings.autoLine]);
 
@@ -235,8 +260,8 @@ export function ReviewScreen(props: {
     if (mode !== "step") return;
     const onKey = (e: KeyboardEvent) => {
       if (showSettings) return;
-      if (e.key === "ArrowRight") line ? stepLine(line.at + 1) : go(ply + 1, true);
-      else if (e.key === "ArrowLeft") line ? (line.at > 0 ? stepLine(line.at - 1) : setLine(null)) : go(ply - 1);
+      if (e.key === "ArrowRight") forward();
+      else if (e.key === "ArrowLeft") back();
       else if (e.key === "Home") go(0);
       else if (e.key === "End") go(n);
       else return;
@@ -246,14 +271,14 @@ export function ReviewScreen(props: {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const icon = mr && settings.onBoard && mode === "step" ? { cls: mr.cls, square: source.plies[ply - 1].to } : undefined;
+  const icon = mr && settings.onBoard && mode === "step" ? { cls: mr.cls, square: source.plies[atPly - 1].to } : undefined;
   const boardClass = mr && mode === "step" ? `mark-${mr.cls}` : undefined;
-  const shownEval = analysis ? (line && line.at > 0 ? analysis.evals[line.base] : analysis.evals[ply]) : undefined;
+  const shownEval = analysis ? analysis.evals[atPly] : undefined;
   const top: Color = orientation === "white" ? "black" : "white";
 
   return (
     <div className="app review">
-      <EvalBar win={shownEval ? wins[line && line.at > 0 ? line.base : ply] : 50} text={evalText(shownEval)} orientation={orientation} />
+      <EvalBar win={shownEval ? wins[atPly] : 50} text={evalText(shownEval)} orientation={orientation} />
       <div className="board-col">
         <ReviewBar player={source.players[top]} color={top} />
         <Board
@@ -295,13 +320,15 @@ export function ReviewScreen(props: {
         )}
         {progress && (
           <div className="analysing">
-            <p>正在分析</p>
-            <div className="progress">
+            <Coach>
+              <div className="bubble">
+                <p className="bubble-text">正在分析</p>
+              </div>
+            </Coach>
+            <div className="progress big">
               <div style={{ width: `${(progress.done / Math.max(1, progress.total)) * 100}%` }} />
+              <span>{Math.floor((progress.done / Math.max(1, progress.total)) * 100)}%</span>
             </div>
-            <p className="muted">
-              {engine?.name}　{progress.done} / {progress.total}
-            </p>
           </div>
         )}
 
@@ -324,32 +351,46 @@ export function ReviewScreen(props: {
 
         {review && analysis && mode === "step" && (
           <>
-            <Bubble review={review} ply={ply} line={line} evals={analysis.evals} positions={source.positions} />
+            <Coach>
+              <Bubble
+                review={review}
+                ply={ply}
+                line={line}
+                evals={analysis.evals}
+                plies={source.plies}
+                onPickLine={(at) => stepLine(at)}
+              />
+            </Coach>
             <div className="review-actions">
-              {line ? (
+              {line?.kind === "best" ? (
                 <>
-                  <button onClick={() => (line.at > 0 ? stepLine(line.at - 1) : setLine(null))}>‹</button>
-                  <button onClick={() => stepLine(line.at + 1)} disabled={line.at >= line.ucis.length}>
-                    ›
+                  <button disabled>
+                    <ClsIcon cls="best" size={18} /> 最佳
                   </button>
                   <button className="primary" onClick={() => setLine(null)}>
-                    好了
+                    继续
                   </button>
                 </>
               ) : (
                 <>
-                  {mr && BAD.includes(mr.cls) && (
+                  {ply > 0 && BAD.includes(review.moves[ply - 1].cls) && (
                     <button onClick={() => startLine("best")} title="该怎么走">
                       <ClsIcon cls="best" size={18} /> 最佳
                     </button>
                   )}
-                  {ply > 0 && analysis.evals[ply].pv.length > 0 && (
-                    <button onClick={() => startLine("explain")} title="往下会怎么走">
-                      <BulbIcon /> 解析
-                    </button>
-                  )}
+                  {ply > 0 &&
+                    analysis.evals[ply].pv.length > 0 &&
+                    (line ? (
+                      <button onClick={() => setLine(null)}>
+                        <BulbIcon /> 隐藏
+                      </button>
+                    ) : (
+                      <button onClick={() => startLine("explain")} title="往下会怎么走">
+                        <BulbIcon /> 解析
+                      </button>
+                    ))}
                   <button className="primary" onClick={nextKeyMove}>
-                    {nextKey(review, ply, only) === undefined ? "回到总结" : "下一个 →"}
+                    {nextKey(review, ply, only) !== undefined ? "下一个 →" : ply < n ? "→" : "← 亮点"}
                   </button>
                 </>
               )}
@@ -357,21 +398,19 @@ export function ReviewScreen(props: {
             <MoveList
               plies={source.plies}
               review={review}
-              ply={ply}
-              line={line}
+              ply={atPly}
               settings={settings}
               moveTimes={source.moveTimes}
               onPick={go}
-              onPickLine={stepLine}
             />
             <Graph wins={wins} review={review} ply={line ? line.base : ply} onPick={(p) => go(p)} />
             <div className="nav">
               <button title="开头" onClick={() => go(0)}>⏮</button>
-              <button title="上一步" onClick={() => go(ply - 1)}>◀</button>
+              <button title="上一步" onClick={back}>◀</button>
               <button title={autoplay ? "停" : "自动播放"} onClick={() => setAutoplay((a) => !a)}>
                 {autoplay ? "⏸" : "▶︎"}
               </button>
-              <button title="下一步" onClick={() => go(ply + 1, true)}>▶</button>
+              <button title="下一步" onClick={forward}>▶</button>
               <button title="最后" onClick={() => go(n)}>⏭</button>
             </div>
           </>
@@ -450,6 +489,9 @@ function Summary(props: {
   const { review } = props;
   return (
     <div className="summary">
+      <Coach>
+        <div className="bubble" />
+      </Coach>
       <Graph wins={props.wins} review={review} onPick={props.onPick} />
       <div className="sum-grid">
         <span />
@@ -513,22 +555,39 @@ function Area({ name, w, b }: { name: string; w: GameReview["areas"]["white"]["o
   );
 }
 
+/** 教练: 左边头像, 右边讲话的框。教练以后接本机千问说话, 现在头像是占位的 (程序图标的样子) */
+function Coach({ children }: { children: ReactNode }) {
+  return (
+    <div className="coach">
+      <img className="coach-face" src="/avatars/coach.svg" alt="" draggable={false} />
+      {children}
+    </div>
+  );
+}
+
+function EvalChip({ e }: { e: PosEval }) {
+  return <span className={`eval-chip ${(e.cp ?? 0) < 0 || (e.mate ?? 0) < 0 ? "dark" : ""}`}>{evalWords(e)}</span>;
+}
+
+/** 讲话的框: 这步好不好、分数; 「解析」时下面一行写往下怎么走 (连这步一起, 点哪步翻到哪步) */
 function Bubble(props: {
   review: GameReview;
   ply: number;
   line: Line | null;
   evals: Analysis["evals"];
-  positions: readonly Chess[];
+  plies: Ply[];
+  onPickLine: (at: number) => void;
 }) {
   const { review, ply, line, evals } = props;
-  if (line) {
-    const e = line.at > 0 ? evals[line.base] : evals[line.base];
+  if (line?.kind === "best") {
     return (
       <div className="bubble">
         <div className="bubble-head">
-          {line.kind === "best" ? <ClsIcon cls="best" size={22} /> : <BulbIcon />}
-          <span className="bubble-title">{line.kind === "best" ? `最佳是 ${line.sans[0]}` : "解析"}</span>
-          <span className={`eval-chip ${(e.cp ?? 0) < 0 || (e.mate ?? 0) < 0 ? "dark" : ""}`}>{evalText(e)}</span>
+          <ClsIcon cls="best" size={22} />
+          <span className="bubble-title">
+            最佳是 <San san={line.sans[0]} color={line.base % 2 === 0 ? "white" : "black"} />
+          </span>
+          <EvalChip e={evals[line.base]} />
         </div>
       </div>
     );
@@ -551,9 +610,19 @@ function Bubble(props: {
         <span className="bubble-title" style={{ color: CLS_COLOR[m.cls] }}>
           {CLS_NAME[m.cls]}
         </span>
-        <span className={`eval-chip ${(e.cp ?? 0) < 0 || (e.mate ?? 0) < 0 ? "dark" : ""}`}>{evalText(e)}</span>
+        <EvalChip e={e} />
       </div>
       {opening && <p className="bubble-text">{opening}</p>}
+      {line && (
+        <p className="bubble-line">
+          {[props.plies[line.base - 1].san, ...line.sans].map((san, i) => (
+            <span key={i} className={line.at === i ? "current" : ""} onClick={() => props.onPickLine(i)}>
+              {movePrefix(line.base + i, i === 0)}
+              <San san={san} color={(line.base + i) % 2 === 1 ? "white" : "black"} />
+            </span>
+          ))}
+        </p>
+      )}
     </div>
   );
 }
@@ -562,20 +631,17 @@ function MoveList(props: {
   plies: Ply[];
   review: GameReview;
   ply: number;
-  line: Line | null;
   settings: ReviewSettings;
   moveTimes: number[];
   onPick: (ply: number) => void;
-  onPickLine: (at: number) => void;
 }) {
-  const { plies, review, ply, line, settings } = props;
+  const { plies, review, ply, settings } = props;
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     ref.current?.querySelector(".current")?.scrollIntoView({ block: "nearest" });
-  }, [ply, line?.at]);
+  }, [ply]);
   const rows: number[] = [];
   for (let i = 1; i <= plies.length; i += 2) rows.push(i);
-  const lineRow = line ? Math.max(1, line.base % 2 === 0 ? line.base - 1 : line.base) : -1;
 
   const cell = (p: number) => {
     if (p > plies.length) return <span className="rmove" />;
@@ -584,9 +650,11 @@ function MoveList(props: {
     const bad = BAD.includes(m.cls);
     const t = props.moveTimes[p - 1];
     return (
-      <span className={`rmove${p === ply && !line ? " current" : ""}`} onClick={() => props.onPick(p)}>
+      <span className={`rmove${p === ply ? " current" : ""}`} onClick={() => props.onPick(p)}>
         {mark && (settings.markAll || mark !== "book" || p === review.openingPly || m.key) && <ClsIcon cls={mark} size={15} />}
-        <span style={bad ? { color: CLS_COLOR[m.cls] } : undefined}>{plies[p - 1].san}</span>
+        <span style={bad ? { color: CLS_COLOR[m.cls] } : undefined}>
+          <San san={plies[p - 1].san} color={p % 2 === 1 ? "white" : "black"} />
+        </span>
         {settings.showTime && t !== undefined && <span className="spent">{(t / 1000).toFixed(1)}秒</span>}
       </span>
     );
@@ -595,21 +663,10 @@ function MoveList(props: {
   return (
     <div className="moves review-moves" ref={ref}>
       {rows.map((w) => (
-        <div key={w}>
-          <div className="move-row">
-            <span className="move-no">{moveNo(w)}.</span>
-            {cell(w)}
-            {cell(w + 1)}
-          </div>
-          {line && lineRow === w && (
-            <div className="line-row">
-              {lineWords(line.base, line.sans).map((word, i) => (
-                <span key={i} className={line.at === i + 1 ? "current" : ""} onClick={() => props.onPickLine(i + 1)}>
-                  {word}
-                </span>
-              ))}
-            </div>
-          )}
+        <div key={w} className="move-row">
+          <span className="move-no">{moveNo(w)}.</span>
+          {cell(w)}
+          {cell(w + 1)}
         </div>
       ))}
     </div>
@@ -657,7 +714,7 @@ function SettingsDialog(props: {
   onClose: () => void;
 }) {
   const { settings: s } = props;
-  const [tab, setTab] = useState<"engine" | "view">("engine");
+  const [tab, setTab] = useState<"engine" | "view" | "board">("engine");
   const set = (patch: Partial<ReviewSettings>) => props.onChange({ ...s, ...patch });
   return (
     <div className="dialog-back" onClick={props.onClose}>
@@ -675,8 +732,13 @@ function SettingsDialog(props: {
           <button className={tab === "view" ? "on" : ""} onClick={() => setTab("view")}>
             查看
           </button>
+          <button className={tab === "board" ? "on" : ""} onClick={() => setTab("board")}>
+            棋盘
+          </button>
         </div>
-        {tab === "engine" ? (
+        {tab === "board" ? (
+          <BoardOptions />
+        ) : tab === "engine" ? (
           <div className="opts">
             <label className="opt">
               <span>引擎</span>
@@ -736,30 +798,10 @@ function SettingsDialog(props: {
   );
 }
 
-function Toggle(props: { label: string; on: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label className="opt">
-      <span>{props.label}</span>
-      <button className={`switch${props.on ? " on" : ""}`} onClick={() => props.onChange(!props.on)} role="switch" aria-checked={props.on}>
-        <span />
-      </button>
-    </label>
-  );
-}
-
 export function FlipIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M7 4v14M7 18l-3-3M7 18l3-3M17 20V6M17 6l-3 3M17 6l3 3" />
-    </svg>
-  );
-}
-
-function GearIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
     </svg>
   );
 }
