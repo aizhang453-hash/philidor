@@ -21,6 +21,7 @@ import { findUpdates } from "./updates";
 import iconUrl from "../src-tauri/icons/icon.svg";
 import { FlipIcon, ReviewScreen, type ReviewSource } from "./ReviewScreen";
 import { BoardSettingsDialog, GearIcon, San } from "./BoardOptions";
+import { COACHES, loadCoach, saveCoach } from "./coaches";
 
 import type { Analysis } from "./analysis";
 import { importPgn } from "./pgnImport";
@@ -47,7 +48,7 @@ function threadChoices(): number[] {
 
 const SETUP_KEY = "philidor:setup";
 
-type Screen = "menu" | "game" | "engines" | "review" | "import";
+type Screen = "menu" | "game" | "engines" | "review" | "import" | "coaches";
 
 interface Notice {
   text: string;
@@ -388,6 +389,7 @@ export function App() {
       <Menu
         onPlay={() => go("game")}
         onImport={() => go("import")}
+        onCoaches={() => go("coaches")}
         onEngines={() => go("engines")}
         onQuit={() => transport.quit()}
         hasUpdate={(engines ?? []).some((e) => updates[e.id])}
@@ -409,6 +411,10 @@ export function App() {
 
   if (screen === "import") {
     return <ImportPage onBack={() => go("menu")} onReview={reviewPgn} />;
+  }
+
+  if (screen === "coaches") {
+    return <CoachesPage onBack={() => go("menu")} />;
   }
 
   if (screen === "engines") {
@@ -618,7 +624,14 @@ function SetupPanel(props: {
   );
 }
 
-function Menu(props: { onPlay: () => void; onImport: () => void; onEngines: () => void; onQuit: () => void; hasUpdate: boolean }) {
+function Menu(props: {
+  onPlay: () => void;
+  onImport: () => void;
+  onCoaches: () => void;
+  onEngines: () => void;
+  onQuit: () => void;
+  hasUpdate: boolean;
+}) {
   return (
     <div className="menu">
       <img className="menu-icon" src={iconUrl} alt="" draggable={false} />
@@ -628,12 +641,43 @@ function Menu(props: { onPlay: () => void; onImport: () => void; onEngines: () =
           新对局
         </button>
         <button onClick={props.onImport}>导入棋谱</button>
+        <button onClick={props.onCoaches}>教练</button>
         <button onClick={props.onEngines}>
           引擎
           {props.hasUpdate && <span className="dot" title="有引擎出了新版" />}
         </button>
         <button onClick={props.onQuit}>退出</button>
       </nav>
+    </div>
+  );
+}
+
+/** 选教练: 选好的在对局回顾里讲话 */
+function CoachesPage(props: { onBack: () => void }) {
+  const [chosen, setChosen] = useState(() => loadCoach().id);
+  return (
+    <div className="page">
+      <div className="card">
+        <div className="head">
+          <h2>教练</h2>
+          <button onClick={props.onBack}>主菜单</button>
+        </div>
+        <div className="coach-grid">
+          {COACHES.map((c) => (
+            <button
+              key={c.id}
+              className={`coach-card${c.id === chosen ? " on" : ""}`}
+              onClick={() => {
+                setChosen(c.id);
+                saveCoach(c.id);
+              }}
+            >
+              <img src={c.avatar} alt="" draggable={false} />
+              <span>{c.name}</span>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

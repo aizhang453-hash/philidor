@@ -1306,3 +1306,38 @@ button.icon:hover:not(:disabled) {
 .coach .bubble::before {
   border-color: transparent #fff transparent transparent;
 }
+
+/* 选教练: 一张张卡片, 选中的描胡桃木色的边 */
+.coach-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.coach-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  height: auto;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.coach-card img {
+  width: 96px;
+  height: 96px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.coach-card span {
+  font-size: 15px;
+  color: var(--text-strong);
+}
+
+.coach-card.on {
+  border-color: var(--primary);
+}

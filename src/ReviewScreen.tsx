@@ -19,6 +19,7 @@ import { loadBook } from "./book";
 import { playMoveSound } from "./sound";
 import { BoardOptions, GearIcon, San, Toggle } from "./BoardOptions";
 import { useBoardSettings } from "./boardSettings";
+import { loadCoach } from "./coaches";
 import type { EngineEntry } from "./engines";
 import {
   DELAYS,
@@ -555,11 +556,12 @@ function Area({ name, w, b }: { name: string; w: GameReview["areas"]["white"]["o
   );
 }
 
-/** 教练: 左边头像, 右边讲话的框。教练以后接本机千问说话, 现在头像是占位的 (程序图标的样子) */
+/** 教练: 左边头像 (开始菜单「教练」里选的), 右边讲话的框。说的话以后接本机千问 */
 function Coach({ children }: { children: ReactNode }) {
+  const coach = loadCoach();
   return (
     <div className="coach">
-      <img className="coach-face" src="/avatars/coach.svg" alt="" draggable={false} />
+      <img className="coach-face" src={coach.avatar} alt={coach.name} title={coach.name} draggable={false} />
       {children}
     </div>
   );
