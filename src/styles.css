@@ -1341,3 +1341,21 @@ button.icon:hover:not(:disabled) {
 .coach-card.on {
   border-color: var(--primary);
 }
+
+/* 教练讲往事、引原话那一句 */
+.bubble .bubble-quote {
+  color: #7a5a3a;
+}
+.bubble .bubble-text + .bubble-text {
+  margin-top: 4px;
+}
+
+/* 教练的框留够四行字 (事实两行 + 口气或原话两行), 字少的步下面的按钮也不跳 */
+.coach .bubble {
+  min-height: 132px;
+}
+
+/* 千问还在写口气那一句 */
+.bubble .bubble-wait {
+  color: #aaa;
+}

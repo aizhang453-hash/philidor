@@ -38,6 +38,16 @@ pub fn request(path: &str, body: Option<&str>, timeout_ms: u64) -> Result<Reply,
 mod tests {
     use super::*;
 
+    /// 真的问一次本机的千问 (要开着 Ollama): cargo test -- --ignored real_chat --nocapture
+    #[test]
+    #[ignore]
+    fn real_chat() {
+        let body = r#"{"model":"qwen3.5:9b","stream":false,"think":false,"keep_alive":"5m","options":{"num_predict":30},"messages":[{"role":"user","content":"用一句中文说：别着急。"}]}"#;
+        let r = request("/api/chat", Some(body), 60_000).expect("连不上 Ollama");
+        assert_eq!(r.status, 200, "{}", r.body);
+        println!("千问说: {}", r.body.chars().take(300).collect::<String>());
+    }
+
     #[test]
     fn refuses_other_paths() {
         assert!(request("/api/delete", Some("{}"), 1000).is_err());

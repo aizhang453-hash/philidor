@@ -20,6 +20,8 @@ import { playMoveSound } from "./sound";
 import { BoardOptions, GearIcon, San, Toggle } from "./BoardOptions";
 import { useBoardSettings } from "./boardSettings";
 import { loadCoach } from "./coaches";
+import { coachTalk, moveFacts, planQuotes, summaryFact, SUMMARY_TONE, type MoveFacts, type Talk } from "./coachTalk";
+import { aiTone, voiceModel } from "./coachVoice";
 import type { EngineEntry } from "./engines";
 import {
   DELAYS,
@@ -156,6 +158,35 @@ export function ReviewScreen(props: {
   }, [run, analysis === null]);
 
   const review = analysis?.review;
+
+  // 教练说的话: 每步的情况 (算过的记下来), 一盘里哪几步讲往事、原话
+  const factsOf = useMemo(() => {
+    const cache = new Map<number, MoveFacts>();
+    return (p: number) => {
+      let f = cache.get(p);
+      if (!f && analysis) {
+        f = moveFacts(p, source.positions, source.plies, analysis.evals);
+        cache.set(p, f);
+      }
+      return f!;
+    };
+  }, [analysis]);
+  const quotePlan = useMemo(() => (analysis ? planQuotes(analysis.review, factsOf) : new Map()), [analysis, factsOf]);
+  // 千问写口气那一句 (装了、开着才用); 写过的记下来, 往回翻不会变
+  const [voiceOn, setVoiceOn] = useState<boolean | null>(null);
+  const [aiTones, setAiTones] = useState<Record<number, string | null>>({});
+  const wantRef = useRef<number[]>([]);
+  useEffect(() => {
+    void voiceModel().then((m) => setVoiceOn(!!m));
+  }, []);
+
+  function talkAt(p: number): Talk | undefined {
+    if (!review || p < 1) return undefined;
+    const m = review.moves[p - 1];
+    const opening =
+      m.cls === "book" && review.opening && review.openingPly !== undefined && review.openingPly <= p ? chineseOpening(review.opening) : undefined;
+    return coachTalk(m, factsOf(p), quotePlan.get(p), opening);
+  }
   const wins = useMemo(() => (analysis ? whiteWins(analysis.evals) : []), [analysis]);
   const only: Color | undefined = settings.mineOnly && source.humans.length === 1 ? source.humans[0] : undefined;
 
@@ -214,6 +245,42 @@ export function ReviewScreen(props: {
     setAutoplay(false);
     setLine({ kind, base, ...playLine(source.positions[base], pv), at: kind === "best" ? 1 : 0, auto: true });
   }
+
+  // 总结页: 事实程序写, 口气千问写 (记在 aiTones 的 0 号)
+  const summaryText = useMemo(() => (analysis ? summaryFact(analysis.review, source.plies, factsOf) : ""), [analysis, factsOf]);
+  useEffect(() => {
+    if (!voiceOn || !summaryText || 0 in aiTones) return;
+    setAiTones((cur) => (0 in cur ? cur : { ...cur, 0: undefined as unknown as null }));
+    void aiTone("good", summaryText, 0, []).then((out) => setAiTones((cur) => ({ ...cur, 0: out ?? null })));
+  }, [voiceOn, summaryText]);
+  const summaryAi = voiceOn ? (0 in aiTones && aiTones[0] !== undefined ? aiTones[0] : "wait") : null;
+
+  // 看到哪一步, 就让千问写那一步的口气, 顺便先写下一个关键步的
+  useEffect(() => {
+    if (!voiceOn || !review || mode !== "step" || ply < 1) return;
+    const next = nextKey(review, ply, only);
+    const targets = [ply, ...(next !== undefined ? [next] : [])];
+    wantRef.current = targets;
+    for (const p of targets) {
+      const t = talkAt(p);
+      if (!t || t.quote || p in aiTones) continue;
+      const recent = Object.keys(aiTones)
+        .map(Number)
+        .filter((q) => q < p && aiTones[q])
+        .sort((x, y) => x - y)
+        .slice(-8)
+        .map((q) => aiTones[q]!);
+      setAiTones((cur) => (p in cur ? cur : { ...cur, [p]: undefined as unknown as null }));
+      void aiTone(review.moves[p - 1].cls, t.fact, p, recent, () => wantRef.current.includes(p)).then((out) => {
+        setAiTones((cur) => {
+          const copy = { ...cur };
+          if (out === undefined) delete copy[p];
+          else copy[p] = out;
+          return copy;
+        });
+      });
+    }
+  }, [voiceOn, review, mode, ply]);
 
   /** 上一步: 摆出来的那几步里往回翻, 翻到头就收起来; 不然是棋谱的上一步 */
   function back() {
@@ -338,6 +405,8 @@ export function ReviewScreen(props: {
             review={review}
             wins={wins}
             players={source.players}
+            fact={summaryText}
+            ai={summaryAi}
             onPick={(p) => {
               setMode("step");
               go(p);
@@ -359,6 +428,8 @@ export function ReviewScreen(props: {
                 line={line}
                 evals={analysis.evals}
                 plies={source.plies}
+                talk={talkAt(ply)}
+                ai={voiceOn ? (ply in aiTones ? (aiTones[ply] === undefined ? "wait" : aiTones[ply]) : "wait") : null}
                 onPickLine={(at) => stepLine(at)}
               />
             </Coach>
@@ -484,6 +555,9 @@ function Summary(props: {
   review: GameReview;
   wins: number[];
   players: ReviewSource["players"];
+  /** 教练说的: 事实 (程序写) 和口气 (千问写; "wait" 是还在写, null 用写好的) */
+  fact: string;
+  ai: string | null;
   onPick: (ply: number) => void;
   onStart: () => void;
 }) {
@@ -491,7 +565,12 @@ function Summary(props: {
   return (
     <div className="summary">
       <Coach>
-        <div className="bubble" />
+        <div className="bubble">
+          <p className="bubble-text">{props.fact}</p>
+          <p className={`bubble-text${props.ai === "wait" ? " bubble-wait" : ""}`} data-src={props.ai && props.ai !== "wait" ? "ai" : "fixed"}>
+            {props.ai === "wait" ? "……" : (props.ai ?? SUMMARY_TONE)}
+          </p>
+        </div>
       </Coach>
       <Graph wins={props.wins} review={review} onPick={props.onPick} />
       <div className="sum-grid">
@@ -578,6 +657,10 @@ function Bubble(props: {
   line: Line | null;
   evals: Analysis["evals"];
   plies: Ply[];
+  /** 教练这一步说的话 */
+  talk?: Talk;
+  /** 千问写的口气: "wait" 是还在写, null 是不用 (没开或写不出合格的) */
+  ai?: string | null;
   onPickLine: (at: number) => void;
 }) {
   const { review, ply, line, evals } = props;
@@ -604,7 +687,7 @@ function Bubble(props: {
     );
   const m = review.moves[ply - 1];
   const e = evals[ply];
-  const opening = m.cls === "book" && review.opening && review.openingPly !== undefined && review.openingPly <= ply ? chineseOpening(review.opening) : undefined;
+  const talk = props.talk;
   return (
     <div className="bubble">
       <div className="bubble-head">
@@ -614,7 +697,15 @@ function Bubble(props: {
         </span>
         <EvalChip e={e} />
       </div>
-      {opening && <p className="bubble-text">{opening}</p>}
+      {talk && <p className="bubble-text">{talk.fact}</p>}
+      {talk && !line && (
+        <p
+          className={`bubble-text${talk.quote ? " bubble-quote" : ""}${!talk.quote && props.ai === "wait" ? " bubble-wait" : ""}`}
+          data-src={talk.quote ? "quote" : props.ai && props.ai !== "wait" ? "ai" : "fixed"}
+        >
+          {talk.quote ? talk.tone : props.ai === "wait" ? "……" : (props.ai ?? talk.tone)}
+        </p>
+      )}
       {line && (
         <p className="bubble-line">
           {[props.plies[line.base - 1].san, ...line.sans].map((san, i) => (
