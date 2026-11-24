@@ -20,7 +20,7 @@ import { playMoveSound } from "./sound";
 import { BoardOptions, GearIcon, San, Toggle } from "./BoardOptions";
 import { useBoardSettings } from "./boardSettings";
 import { loadCoach } from "./coaches";
-import { coachTalk, moveFacts, planQuotes, summaryFact, SUMMARY_TONE, type MoveFacts, type Talk } from "./coachTalk";
+import { coachTalk, LOADING_FACTS, moveFacts, planQuotes, summaryFact, SUMMARY_TONE, type MoveFacts, type Talk } from "./coachTalk";
 import { aiTone, voiceModel } from "./coachVoice";
 import type { EngineEntry } from "./engines";
 import {
@@ -172,6 +172,14 @@ export function ReviewScreen(props: {
     };
   }, [analysis]);
   const quotePlan = useMemo(() => (analysis ? planQuotes(analysis.review, factsOf) : new Map()), [analysis, factsOf]);
+  // 分析时教练讲小知识, 七秒换一句
+  const [factIdx, setFactIdx] = useState(() => Math.floor(Math.random() * LOADING_FACTS.length));
+  useEffect(() => {
+    if (!progress) return;
+    const t = setInterval(() => setFactIdx((i) => (i + 1) % LOADING_FACTS.length), 7000);
+    return () => clearInterval(t);
+  }, [progress !== null]);
+
   // 千问写口气那一句 (装了、开着才用); 写过的记下来, 往回翻不会变
   const [voiceOn, setVoiceOn] = useState<boolean | null>(null);
   const [aiTones, setAiTones] = useState<Record<number, string | null>>({});
@@ -390,7 +398,7 @@ export function ReviewScreen(props: {
           <div className="analysing">
             <Coach>
               <div className="bubble">
-                <p className="bubble-text">正在分析</p>
+                <p className="bubble-text">{LOADING_FACTS[factIdx]}</p>
               </div>
             </Coach>
             <div className="progress big">
